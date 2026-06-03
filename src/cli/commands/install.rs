@@ -18,9 +18,17 @@ pub struct InstallArgs {
     pub from: Option<PathBuf>,
 }
 
+/// Execute install, using the default mirror from config.
 pub fn execute(args: &InstallArgs) -> anyhow::Result<()> {
-    let kind: RuntimeKind = args.tool.parse()?;
     let config = Config::load()?;
+    execute_with(args, &config.core.mirror)
+}
+
+/// Execute install with an explicit mirror override.
+pub fn execute_with(args: &InstallArgs, mirror: &str) -> anyhow::Result<()> {
+    let kind: RuntimeKind = args.tool.parse()?;
+    let mut config = Config::load()?;
+    config.core.mirror = mirror.to_string();
     let from_path = args.from.as_deref();
 
     println!(

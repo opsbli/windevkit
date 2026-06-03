@@ -73,11 +73,20 @@ pub enum Commands {
 }
 
 impl Cli {
+    /// Get the effective mirror: CLI flag overrides config.
+    fn effective_mirror(&self) -> String {
+        self.mirror
+            .clone()
+            .filter(|m| !m.is_empty())
+            .or_else(|| crate::config::Config::load().ok().map(|c| c.core.mirror))
+            .unwrap_or_else(|| "direct".to_string())
+    }
+
     /// Execute the selected command
     pub fn execute(&self) -> anyhow::Result<()> {
         match &self.command {
             Commands::Init(args) => commands::init::execute_with(args, self.mirror.as_deref()),
-            Commands::Install(args) => commands::install::execute(args),
+            Commands::Install(args) => commands::install::execute_with(args, &self.effective_mirror()),
             Commands::Use(args) => commands::use_version::execute(args),
             Commands::Exec(args) => commands::exec::execute(args),
             Commands::List(args) => commands::list::execute(args),
