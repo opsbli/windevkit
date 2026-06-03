@@ -72,18 +72,10 @@ pub fn remove_from_path(home: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Get the current user PATH as a list of strings.
+/// Get the current user PATH from the registry ONLY.
+/// Never falls back to process env var to avoid mingw/msys pollution.
 fn current_user_path() -> Vec<String> {
-    // Read from registry (persistent user PATH)
-    get_registry_path().unwrap_or_else(|_| {
-        // Fallback: read from environment
-        std::env::var("PATH")
-            .unwrap_or_default()
-            .split(';')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    })
+    get_registry_path().unwrap_or_default()
 }
 
 /// Read user PATH from Windows registry.
@@ -102,16 +94,17 @@ fn get_registry_path() -> std::io::Result<Vec<String>> {
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parse reg.exe output: look for the REG_EXPAND_SZ or REG_SZ value
+    // Parse reg.exe output: columns separated by 4+ spaces.
+    // Typical output: "    Path    REG_SZ    C:\Users\..."
     for line in stdout.lines() {
         let line = line.trim();
-        // Typical output: "    Path    REG_EXPAND_SZ    C:\Users\..."
-        // or: "    Path    REG_SZ    C:\Users\..."
-        if let Some(value) = line
-            .splitn(4, ' ')
-            .nth(3)
-            .or_else(|| line.split("    ").nth(2))
-        {
+        if line.is_empty() || line.starts_with("HKEY_") {
+            continue;
+        }
+        // Split by 4+ spaces to get [key, type, value]
+        let parts: Vec<&str> = line.split("    ").collect();
+        if parts.len() >= 3 {
+            let value = parts[2];
             let expanded = expand_environment_variables(value);
             return Ok(expanded
                 .split(';')
@@ -124,12 +117,25 @@ fn get_registry_path() -> std::io::Result<Vec<String>> {
     Ok(Vec::new())
 }
 
-/// Write user PATH to Windows registry.
+/// Write user PATH to Windows registry, deduplicated.
 fn set_user_path(paths: &[String]) -> anyhow::Result<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let path_str = paths.join(";");
+    // Deduplicate while preserving order
+    let mut seen = std::collections::HashSet::new();
+    let mut clean = Vec::new();
+    for p in paths {
+        let trimmed = p.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_lowercase()) {
+            clean.push(trimmed.to_string());
+        }
+    }
+
+    let path_str = clean.join(";");
 
     // Use REG_EXPAND_SZ to support %USERPROFILE% etc.
     let status = std::process::Command::new("reg")
@@ -151,18 +157,21 @@ fn set_user_path(paths: &[String]) -> anyhow::Result<()> {
         anyhow::bail!("Failed to update PATH in registry (exit code: {:?})", status.code());
     }
 
-    // Broadcast WM_SETTINGCHANGE so Explorer and new processes pick up the change
+    // Broadcast WM_SETTINGCHANGE so Explorer and new processes pick up the change.
+    // Use the EXACT value we just wrote (not $env:Path, which may differ from registry).
     let _ = std::process::Command::new("powershell")
         .args([
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "& { [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User'); \
-             [Environment]::SetEnvironmentVariable('Path', $env:Path, 'Process') }",
+            &format!(
+                "& {{ [Environment]::SetEnvironmentVariable('Path', '{path_str}', 'User') }}"
+            ),
         ])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
+    tracing::info!("PATH updated in registry");
     Ok(())
 }
 
