@@ -1,0 +1,20 @@
+# Rust
+target/
+*.rs.bk
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+
+# windevkit export (generated)
+.windevkit/
+
+# Logs
+*.log
