@@ -11,9 +11,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "windevkit", version, about, long_about = None)]
 pub struct Cli {
-    /// Verbose mode (-v: debug, -vv: trace)
-    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, global = true)]
-    pub verbose: u8,
+    /// Verbose mode
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
 
     /// Mirror for downloads (aliyun, huawei, npmmirror, direct)
     #[arg(long = "mirror", global = true)]

@@ -1,5 +1,9 @@
 use std::path::PathBuf;
 use clap::Args;
+use colored::Colorize;
+
+use crate::config::Config;
+use crate::runtime::{self, RuntimeKind};
 
 #[derive(Args, Debug)]
 pub struct InstallArgs {
@@ -15,10 +19,17 @@ pub struct InstallArgs {
 }
 
 pub fn execute(args: &InstallArgs) -> anyhow::Result<()> {
+    let kind: RuntimeKind = args.tool.parse()?;
+    let config = Config::load()?;
+    let from_path = args.from.as_deref();
+
     println!(
-        "📦  Installing {} {}... (from: {:?})",
-        args.tool, args.version, args.from
+        "{} Installing {} {}...",
+        "📦".bold(),
+        kind.to_string().bold(),
+        args.version
     );
-    // TODO: implement
+
+    runtime::install(kind, &args.version, from_path, &config)?;
     Ok(())
 }

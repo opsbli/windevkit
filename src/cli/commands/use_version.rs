@@ -1,4 +1,7 @@
 use clap::Args;
+use colored::Colorize;
+
+use crate::runtime::{self, RuntimeKind};
 
 #[derive(Args, Debug)]
 pub struct UseArgs {
@@ -10,7 +13,15 @@ pub struct UseArgs {
 }
 
 pub fn execute(args: &UseArgs) -> anyhow::Result<()> {
-    println!("🔗  Switching {} to {}...", args.tool, args.version);
-    // TODO: implement
+    let kind: RuntimeKind = args.tool.parse()?;
+
+    println!(
+        "{} Switching {} to {}...",
+        "🔗".bold(),
+        kind.to_string().bold(),
+        args.version
+    );
+
+    runtime::activate(kind, &args.version)?;
     Ok(())
 }
