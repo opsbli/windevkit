@@ -87,7 +87,9 @@ impl Default for Config {
 impl Config {
     /// Home directory path (~/.windevkit)
     pub fn home_dir() -> PathBuf {
-        dirs_data_dir().join(".windevkit")
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".windevkit")
     }
 
     /// Config file path (~/.windevkit/config.toml)
@@ -119,7 +121,4 @@ impl Config {
     }
 }
 
-/// Get the user's data directory.
-fn dirs_data_dir() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(|| PathBuf::from("~"))
-}
+

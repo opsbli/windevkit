@@ -75,14 +75,8 @@ pub enum Commands {
 impl Cli {
     /// Execute the selected command
     pub fn execute(&self) -> anyhow::Result<()> {
-        // Set global mirror if provided
-        if let Some(ref mirror) = self.mirror {
-            // TODO: apply mirror to config
-            let _ = mirror;
-        }
-
         match &self.command {
-            Commands::Init(args) => commands::init::execute(args),
+            Commands::Init(args) => commands::init::execute_with(args, self.mirror.as_deref()),
             Commands::Install(args) => commands::install::execute(args),
             Commands::Use(args) => commands::use_version::execute(args),
             Commands::Exec(args) => commands::exec::execute(args),
