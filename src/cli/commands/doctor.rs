@@ -49,10 +49,24 @@ pub fn execute(fix: bool) -> anyhow::Result<()> {
                         kind,
                         latest.version
                     );
-                    let _ = symlink::set_active(
+                    if symlink::set_active(
                         &link,
                         &symlink::version_dir(&home, *kind, &latest.version),
-                    );
+                    ).is_ok() {
+                        let target = symlink::read_link(&link)
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        println!(
+                            "  {} {} symlink ✓ → {}",
+                            kind_icon(*kind),
+                            kind.to_string().bold(),
+                            target.dimmed()
+                        );
+                    } else {
+                        all_ok = false;
+                    }
+                } else {
+                    all_ok = false;
                 }
             } else {
                 println!(
@@ -72,11 +86,18 @@ pub fn execute(fix: bool) -> anyhow::Result<()> {
     if !in_path {
         if fix {
             println!("     {} Adding windevkit to PATH...", "🔧".bold());
-            if let Err(e) = path::add_to_path(&home) {
-                println!("     {} Failed: {}", "✗".red(), e);
+            match path::add_to_path(&home) {
+                Ok(_) => {
+                    print_check("PATH configured", true);
+                }
+                Err(e) => {
+                    println!("     {} Failed: {}", "✗".red(), e);
+                    all_ok = false;
+                }
             }
+        } else {
+            all_ok = false;
         }
-        all_ok = false;
     }
 
     // Check 5: Developer Mode
@@ -90,6 +111,11 @@ pub fn execute(fix: bool) -> anyhow::Result<()> {
         println!(
             "       reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock /t REG_DWORD /v AllowDevelopmentWithoutDevLicense /d 1 /f"
         );
+        if fix {
+            println!("     {} Cannot auto-enable Developer Mode (requires admin rights).", "⚠".yellow());
+            println!("       Run the reg command above as Administrator.");
+        }
+        all_ok = false;
     }
 
     println!();
