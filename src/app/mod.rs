@@ -1,5 +1,10 @@
 //! Windows application management — scan, export, import.
 
+pub mod exporter;
+pub mod importer;
+pub mod manifest;
+pub mod scanner;
+
 use std::path::Path;
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +17,7 @@ pub enum AppSource {
     Manual,
 }
 
-/// An application entry detected on the system.
+/// An application entry detected on or exported from a system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
     pub id: String,
@@ -20,43 +25,36 @@ pub struct AppEntry {
     pub version: String,
     pub source: AppSource,
     pub selected: bool,
-    /// Path to installed location (for portable apps)
+    /// Path to the installer or portable app directory
     pub install_path: Option<String>,
     /// Silent install arguments (for known apps)
     pub silent_args: Option<String>,
 }
 
-/// The exported manifest.
+/// A runtime entry for offline reinstall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Manifest {
-    pub version: String,
-    pub apps: Vec<AppEntry>,
-    pub runtimes: Vec<RuntimeEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeEntry {
+pub struct AppRuntimeEntry {
     pub tool: String,
     pub version: String,
+    /// Path to the local archive file
     pub archive_path: Option<String>,
 }
 
 /// Scan the system for installed applications.
-pub fn scan() -> anyhow::Result<Vec<AppEntry>> {
-    // TODO: implement winget + registry scan
-    Ok(Vec::new())
+pub fn scan(exclude_patterns: &[String]) -> anyhow::Result<Vec<AppEntry>> {
+    scanner::scan(exclude_patterns)
 }
 
 /// Export selected apps to a toolbox directory.
-pub fn export_to(directory: &Path, apps: &[AppEntry], runtimes: &[RuntimeEntry]) -> anyhow::Result<Manifest> {
-    // TODO: implement
-    let _ = (directory, apps, runtimes);
-    anyhow::bail!("export not yet implemented")
+pub fn export_to(
+    directory: &Path,
+    apps: &[AppEntry],
+    include_runtimes: bool,
+) -> anyhow::Result<()> {
+    exporter::export_to(directory, apps, include_runtimes)
 }
 
 /// Import and restore from a toolbox directory.
 pub fn import_from(directory: &Path, interactive: bool) -> anyhow::Result<()> {
-    // TODO: implement
-    let _ = (directory, interactive);
-    anyhow::bail!("import not yet implemented")
+    importer::import_from(directory, interactive)
 }
