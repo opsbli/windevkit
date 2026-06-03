@@ -156,6 +156,6 @@ mod tests {
         assert_eq!(semver_version("22.11.0"), vec![22, 11, 0]);
         assert_eq!(semver_version("21.0.3"), vec![21, 0, 3]);
         assert_eq!(semver_version("3.9.6"), vec![3, 9, 6]);
-        assert_eq!(semver_version("invalid"), vec![]);
+        assert_eq!(semver_version("invalid"), Vec::<u32>::new());
     }
 }
