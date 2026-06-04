@@ -52,8 +52,9 @@ pub fn export_to(
     directory: &Path,
     apps: &[AppEntry],
     include_runtimes: bool,
+    download_concurrency: usize,
 ) -> anyhow::Result<()> {
-    exporter::export_to(directory, apps, include_runtimes)
+    exporter::export_to(directory, apps, include_runtimes, download_concurrency)
 }
 
 /// Import and restore from a toolbox directory.

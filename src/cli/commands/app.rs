@@ -61,6 +61,10 @@ pub enum AppCommands {
         #[arg(long)]
         category: Option<String>,
 
+        /// Override download concurrency for this export
+        #[arg(long)]
+        concurrency: Option<usize>,
+
         /// Non-interactive mode (export without prompts)
         #[arg(long)]
         yes: bool,
@@ -87,7 +91,7 @@ pub fn execute(cmd: &AppCommands) -> anyhow::Result<()> {
         AppCommands::Scan { interactive, filter, category } => cmd_scan(*interactive, filter.as_deref(), category.as_deref()),
         AppCommands::Tui { filter, category } => cmd_tui(filter.as_deref(), category.as_deref()),
         AppCommands::AddPath { dir, name } => cmd_add_path(dir, name.as_deref()),
-        AppCommands::Export { output, filter, category, yes } => cmd_export(output.as_deref(), filter.as_deref(), category.as_deref(), *yes),
+        AppCommands::Export { output, filter, category, concurrency, yes } => cmd_export(output.as_deref(), filter.as_deref(), category.as_deref(), *concurrency, *yes),
         AppCommands::Import { path, yes } => cmd_import(path, *yes),
     }
 }
@@ -233,7 +237,7 @@ fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str>, yes: bool) -> anyhow::Result<()> {
+fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str>, concurrency: Option<usize>, yes: bool) -> anyhow::Result<()> {
     let config = Config::load()?;
     let home = Config::home_dir();
     let export_dir = output
@@ -296,7 +300,14 @@ fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str
             .prompt()?
     };
 
-    app::export_to(&export_dir, &selected_apps, include_runtimes)?;
+    let download_concurrency = concurrency.unwrap_or(config.app_export.download_concurrency).max(1);
+    println!(
+        "  {} Effective download concurrency: {}",
+        "⚡".bold(),
+        download_concurrency.to_string().cyan().bold()
+    );
+
+    app::export_to(&export_dir, &selected_apps, include_runtimes, download_concurrency)?;
     Ok(())
 }
 

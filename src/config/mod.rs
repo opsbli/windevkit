@@ -50,6 +50,7 @@ pub struct AppScanConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppExportConfig {
     pub auto_download_installers: bool,
+    pub download_concurrency: usize,
 }
 
 impl Default for Config {
@@ -79,6 +80,7 @@ impl Default for Config {
             },
             app_export: AppExportConfig {
                 auto_download_installers: true,
+                download_concurrency: 3,
             },
         }
     }

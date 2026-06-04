@@ -11,7 +11,6 @@ use crate::app::{self, AppEntry, AppRuntimeEntry};
 use crate::config::Config;
 use crate::runtime::{self, RuntimeKind};
 
-const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 3;
 
 #[derive(Debug, Clone)]
 struct DownloadTask {
@@ -42,6 +41,7 @@ pub fn export_to(
     output_dir: &Path,
     selected_apps: &[AppEntry],
     include_runtimes: bool,
+    download_concurrency: usize,
 ) -> anyhow::Result<()> {
     let installers_dir = output_dir.join("installers");
     let portables_dir = output_dir.join("portables");
@@ -52,10 +52,11 @@ pub fn export_to(
     std::fs::create_dir_all(&runtimes_dir)?;
 
     println!("{} Exporting toolbox to {}", "📦".bold(), output_dir.display());
+    let download_concurrency = download_concurrency.max(1);
     println!(
         "{} Download concurrency: {}",
         "⚡".bold(),
-        DEFAULT_DOWNLOAD_CONCURRENCY.to_string().cyan().bold()
+        download_concurrency.to_string().cyan().bold()
     );
 
     let config = Config::load()?;
@@ -74,7 +75,7 @@ pub fn export_to(
     all_tasks.extend(app_download_plan.tasks.clone());
     all_tasks.extend(runtime_download_plan.tasks.clone());
 
-    let download_results = run_downloads(all_tasks, DEFAULT_DOWNLOAD_CONCURRENCY)?;
+    let download_results = run_downloads(all_tasks, download_concurrency)?;
     let mut result_map = HashMap::new();
     for outcome in download_results {
         result_map.insert(outcome.key.clone(), outcome);
