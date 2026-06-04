@@ -86,7 +86,9 @@ impl Cli {
     pub fn execute(&self) -> anyhow::Result<()> {
         match &self.command {
             Commands::Init(args) => commands::init::execute_with(args, self.mirror.as_deref()),
-            Commands::Install(args) => commands::install::execute_with(args, &self.effective_mirror()),
+            Commands::Install(args) => {
+                commands::install::execute_with(args, &self.effective_mirror())
+            }
             Commands::Use(args) => commands::use_version::execute(args),
             Commands::Exec(args) => commands::exec::execute(args),
             Commands::List(args) => commands::list::execute(args),
@@ -107,8 +109,7 @@ pub fn init_logging() -> anyhow::Result<()> {
 
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with_target(true)
         .with_file(true)

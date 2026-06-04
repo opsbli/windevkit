@@ -1,10 +1,10 @@
 [package]
 name = "windevkit"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Windows Development Environment Toolkit — one-command runtime install, version switching, and app export/import for fresh Windows setup"
 license = "MIT"
-repository = "https://github.com/sinvitry/windevkit"
+repository = "https://github.com/opsbli/windevkit"
 authors = ["sinvitry"]
 
 [dependencies]

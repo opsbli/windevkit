@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 
+use crate::app::{AppEntry, AppSource};
 use base64::Engine;
 use serde::Deserialize;
-use crate::app::{AppEntry, AppSource};
 
 /// Scan the system for installed applications.
 ///
@@ -48,7 +48,8 @@ pub fn scan(exclude_patterns: &[String]) -> anyhow::Result<Vec<AppEntry>> {
 
 /// Scan apps via `winget list`.
 fn scan_winget() -> anyhow::Result<Vec<AppEntry>> {
-    let winget = find_winget_exe().ok_or_else(|| anyhow::anyhow!("winget not found: program not found"))?;
+    let winget =
+        find_winget_exe().ok_or_else(|| anyhow::anyhow!("winget not found: program not found"))?;
     let output = std::process::Command::new(winget)
         .args(["list", "--accept-source-agreements"])
         .output()
@@ -115,14 +116,22 @@ fn parse_winget_line(line: &str) -> (Option<String>, Option<String>, Option<Stri
     let trimmed = line.trim();
 
     // Split by 2+ spaces (winget uses multi-space alignment)
-    let fields: Vec<&str> = trimmed.split("  ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let fields: Vec<&str> = trimmed
+        .split("  ")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     if fields.len() >= 3 {
         let name = fields[0];
         let id = fields[1];
         let version = fields[2];
         if id.contains('.') {
-            return (Some(name.to_string()), Some(id.to_string()), Some(version.to_string()));
+            return (
+                Some(name.to_string()),
+                Some(id.to_string()),
+                Some(version.to_string()),
+            );
         }
     }
 
@@ -153,14 +162,13 @@ fn find_winget_exe() -> Option<std::path::PathBuf> {
         ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(first) = stdout.lines().map(|s| s.trim()).find(|s| !s.is_empty()) {
-                let p = std::path::PathBuf::from(first);
-                if p.exists() {
-                    return Some(p);
-                }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(first) = stdout.lines().map(|s| s.trim()).find(|s| !s.is_empty()) {
+            let p = std::path::PathBuf::from(first);
+            if p.exists() {
+                return Some(p);
             }
         }
     }
@@ -170,21 +178,23 @@ fn find_winget_exe() -> Option<std::path::PathBuf> {
         .arg("winget.exe")
         .creation_flags(CREATE_NO_WINDOW)
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(first) = stdout.lines().map(|s| s.trim()).find(|s| !s.is_empty()) {
-                let p = std::path::PathBuf::from(first);
-                if p.exists() {
-                    return Some(p);
-                }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(first) = stdout.lines().map(|s| s.trim()).find(|s| !s.is_empty()) {
+            let p = std::path::PathBuf::from(first);
+            if p.exists() {
+                return Some(p);
             }
         }
     }
 
     // 3) WindowsApps app execution alias under LocalAppData
     if let Some(local) = dirs::data_local_dir() {
-        let candidate = local.join("Microsoft").join("WindowsApps").join("winget.exe");
+        let candidate = local
+            .join("Microsoft")
+            .join("WindowsApps")
+            .join("winget.exe");
         if candidate.exists() {
             return Some(candidate);
         }
@@ -255,8 +265,8 @@ if ($null -eq $json) { $json = '[]' }
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(stdout)
         .map_err(|e| anyhow::anyhow!("base64 decode failed: {e}"))?;
-    let json = String::from_utf8(decoded)
-        .map_err(|e| anyhow::anyhow!("utf8 decode failed: {e}"))?;
+    let json =
+        String::from_utf8(decoded).map_err(|e| anyhow::anyhow!("utf8 decode failed: {e}"))?;
 
     let rows: Vec<RegistryAppRow> = serde_json::from_str(&json)
         .or_else(|_| serde_json::from_str::<RegistryAppRow>(&json).map(|row| vec![row]))?;
@@ -319,9 +329,7 @@ fn apply_excludes(apps: Vec<AppEntry>, patterns: &[String]) -> Vec<AppEntry> {
     apps.into_iter()
         .filter(|app| {
             for pattern in patterns {
-                if matches_pattern(&app.name, pattern)
-                    || matches_pattern(&app.id, pattern)
-                {
+                if matches_pattern(&app.name, pattern) || matches_pattern(&app.id, pattern) {
                     return false;
                 }
             }
@@ -402,7 +410,10 @@ fn guess_silent_args(winget_id: &str) -> Option<String> {
         ("VideoLAN.VLC", "/S"),
         ("Adobe.Acrobat.Reader", "/sAll /msi EULA_ACCEPT=YES"),
         ("Microsoft.PowerToys", "--silent"),
-        ("Microsoft.VisualStudioCode", "/verysilent /suppressmsgboxes"),
+        (
+            "Microsoft.VisualStudioCode",
+            "/verysilent /suppressmsgboxes",
+        ),
         ("Git.Git", "/SILENT"),
         ("Notepad++.Notepad++", "/S"),
         ("OBSProject.OBSStudio", "/S"),
@@ -438,7 +449,10 @@ mod tests {
     #[test]
     fn test_matches_pattern() {
         assert!(matches_pattern("KB5041234", "KB*"));
-        assert!(matches_pattern("Microsoft Visual C++ 2022", "Microsoft Visual C++*"));
+        assert!(matches_pattern(
+            "Microsoft Visual C++ 2022",
+            "Microsoft Visual C++*"
+        ));
         assert!(!matches_pattern("Google Chrome", "KB*"));
     }
 

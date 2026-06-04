@@ -13,7 +13,9 @@ pub fn is_in_path(home: &Path) -> bool {
     let bin_path = active_bin_path(home);
     let bin_str = bin_path.to_string_lossy().to_lowercase();
 
-    current_user_path().iter().any(|p| p.to_lowercase() == bin_str)
+    current_user_path()
+        .iter()
+        .any(|p| p.to_lowercase() == bin_str)
 }
 
 /// Add the active/bin path to the user PATH (persistent, via registry).
@@ -37,11 +39,7 @@ pub fn add_to_path(home: &Path) -> anyhow::Result<()> {
 
     tracing::info!("Added to PATH: {}", bin_str);
     // NOTE: The change only affects NEW command prompts, not the current one
-    println!(
-        "  {} Added to PATH: {}",
-        "✓".green(),
-        bin_str.cyan()
-    );
+    println!("  {} Added to PATH: {}", "✓".green(), bin_str.cyan());
     println!(
         "  {} Restart your terminal or run: $env:Path = [Environment]::GetEnvironmentVariable('Path','User')",
         "💡".yellow()
@@ -84,12 +82,7 @@ fn get_registry_path() -> std::io::Result<Vec<String>> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let output = std::process::Command::new("reg")
-        .args([
-            "query",
-            "HKCU\\Environment",
-            "/v",
-            "Path",
-        ])
+        .args(["query", "HKCU\\Environment", "/v", "Path"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()?;
 
@@ -154,7 +147,10 @@ fn set_user_path(paths: &[String]) -> anyhow::Result<()> {
         .status()?;
 
     if !status.success() {
-        anyhow::bail!("Failed to update PATH in registry (exit code: {:?})", status.code());
+        anyhow::bail!(
+            "Failed to update PATH in registry (exit code: {:?})",
+            status.code()
+        );
     }
 
     // Broadcast WM_SETTINGCHANGE so Explorer and new processes pick up the change.
@@ -164,9 +160,7 @@ fn set_user_path(paths: &[String]) -> anyhow::Result<()> {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            &format!(
-                "& {{ [Environment]::SetEnvironmentVariable('Path', '{path_str}', 'User') }}"
-            ),
+            &format!("& {{ [Environment]::SetEnvironmentVariable('Path', '{path_str}', 'User') }}"),
         ])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
@@ -180,17 +174,16 @@ fn expand_environment_variables(s: &str) -> String {
     let mut result = s.to_string();
     // Simple %VAR% expansion using cmd.exe /c echo
     // Only expand if there's a % enclosed variable
-    if result.contains('%') && !result.contains("%%") {
-        if let Ok(output) = std::process::Command::new("cmd.exe")
+    if result.contains('%')
+        && !result.contains("%%")
+        && let Ok(output) = std::process::Command::new("cmd.exe")
             .args(["/c", "echo", &result])
             .output()
-        {
-            if let Ok(expanded) = String::from_utf8(output.stdout) {
-                let trimmed = expanded.trim().to_string();
-                if !trimmed.is_empty() && trimmed != result {
-                    result = trimmed;
-                }
-            }
+        && let Ok(expanded) = String::from_utf8(output.stdout)
+    {
+        let trimmed = expanded.trim().to_string();
+        if !trimmed.is_empty() && trimmed != result {
+            result = trimmed;
         }
     }
     result

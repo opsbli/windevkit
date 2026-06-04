@@ -1,7 +1,7 @@
 //! Archive extraction — ZIP and TGZ support.
 
-use std::path::{Path, PathBuf};
 use indicatif::{ProgressBar, ProgressStyle};
+use std::path::{Path, PathBuf};
 
 /// Extract an archive to the target directory.
 ///
@@ -20,15 +20,15 @@ pub fn extract(archive: &Path, target_dir: &Path) -> anyhow::Result<PathBuf> {
     tracing::info!("Extracting {} to {}", file_name, target_dir.display());
     std::fs::create_dir_all(target_dir)?;
 
-    let ext = archive
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = archive.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match ext {
         "zip" => extract_zip(archive, target_dir),
         "gz" | "tgz" => extract_tgz(archive, target_dir),
-        other => anyhow::bail!("Unsupported archive format: .{} (supported: .zip, .tar.gz)", other),
+        other => anyhow::bail!(
+            "Unsupported archive format: .{} (supported: .zip, .tar.gz)",
+            other
+        ),
     }
 }
 
@@ -51,16 +51,13 @@ fn extract_zip(archive: &Path, target_dir: &Path) -> anyhow::Result<PathBuf> {
 
     for i in 0..total {
         let mut entry = zip.by_index(i)?;
-        let entry_path = entry
-            .name()
-            .trim_start_matches('/')
-            .to_string();
+        let entry_path = entry.name().trim_start_matches('/').to_string();
 
         // Determine root directory from first entry
-        if root_dir.is_none() {
-            if let Some(slash) = entry_path.find('/') {
-                root_dir = Some(PathBuf::from(&entry_path[..slash]));
-            }
+        if root_dir.is_none()
+            && let Some(slash) = entry_path.find('/')
+        {
+            root_dir = Some(PathBuf::from(&entry_path[..slash]));
         }
 
         let target_path = target_dir.join(&entry_path);
@@ -101,10 +98,11 @@ fn extract_tgz(archive: &Path, target_dir: &Path) -> anyhow::Result<PathBuf> {
             .trim_start_matches('/')
             .to_string();
 
-        if root_dir.is_none() && entry_path.contains('/') {
-            if let Some(slash) = entry_path.find('/') {
-                root_dir = Some(PathBuf::from(&entry_path[..slash]));
-            }
+        if root_dir.is_none()
+            && entry_path.contains('/')
+            && let Some(slash) = entry_path.find('/')
+        {
+            root_dir = Some(PathBuf::from(&entry_path[..slash]));
         }
 
         let target_path = target_dir.join(&entry_path);

@@ -2,7 +2,7 @@ use clap::Args;
 use colored::Colorize;
 
 use crate::config::Config;
-use crate::runtime::{self, symlink, RuntimeKind};
+use crate::runtime::{self, RuntimeKind, symlink};
 
 #[derive(Args, Debug)]
 pub struct ExecArgs {

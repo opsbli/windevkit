@@ -17,7 +17,10 @@ pub fn run() -> anyhow::Result<()> {
         Ok(v) => v,
         Err(e) => {
             println!("  {} Failed to check for updates: {}", "✗".red(), e);
-            println!("  Check manually: https://github.com/{}/{}", REPO_OWNER, REPO_NAME);
+            println!(
+                "  Check manually: https://github.com/{}/{}",
+                REPO_OWNER, REPO_NAME
+            );
             return Ok(());
         }
     };
@@ -39,7 +42,7 @@ pub fn run() -> anyhow::Result<()> {
     );
 
     // Download and install
-    let asset_name = format!("windevkit-x86_64-pc-windows-msvc.zip");
+    let asset_name = "windevkit-x86_64-pc-windows-msvc.zip".to_string();
     let download_url = format!(
         "https://github.com/{owner}/{repo}/releases/download/v{version}/{asset}",
         owner = REPO_OWNER,
@@ -72,7 +75,8 @@ pub fn run() -> anyhow::Result<()> {
         }
     }
 
-    let new_exe = extracted_exe.ok_or_else(|| anyhow::anyhow!("No executable found in release archive"))?;
+    let new_exe =
+        extracted_exe.ok_or_else(|| anyhow::anyhow!("No executable found in release archive"))?;
 
     // Replace the current executable
     let current_exe = std::env::current_exe()?;
@@ -142,7 +146,9 @@ fn download_file(url: &str, path: &PathBuf) -> anyhow::Result<()> {
     let pb = indicatif::ProgressBar::new(total_size);
     pb.set_style(
         indicatif::ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes}")
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes}",
+            )
             .unwrap()
             .progress_chars("#>-"),
     );

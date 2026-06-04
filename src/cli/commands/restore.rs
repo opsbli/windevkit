@@ -31,10 +31,7 @@ pub fn execute() -> anyhow::Result<()> {
 
     println!("{} Restoring PATH from snapshot...", "⏪".bold());
     println!("   Snapshot: {}", latest.display());
-    println!(
-        "   PATH length: {} entries",
-        path_value.split(';').count()
-    );
+    println!("   PATH length: {} entries", path_value.split(';').count());
 
     // Write the snapshot back to registry
     use std::os::windows::process::CommandExt;
@@ -56,11 +53,11 @@ pub fn execute() -> anyhow::Result<()> {
         .status()?;
 
     if status.success() {
+        println!("  {} PATH restored from snapshot.", "✓".green().bold());
         println!(
-            "  {} PATH restored from snapshot.",
-            "✓".green().bold()
+            "  {} Restart your terminal for changes to take effect.",
+            "💡".yellow()
         );
-        println!("  {} Restart your terminal for changes to take effect.", "💡".yellow());
     } else {
         println!("  {} Failed to restore PATH", "✗".red());
     }

@@ -75,9 +75,15 @@ impl Default for Config {
                 path_scope: "user".into(),
             },
             runtimes: RuntimesConfig {
-                node: RuntimeEntry { default: String::new() },
-                java: RuntimeEntry { default: String::new() },
-                maven: RuntimeEntry { default: String::new() },
+                node: RuntimeEntry {
+                    default: String::new(),
+                },
+                java: RuntimeEntry {
+                    default: String::new(),
+                },
+                maven: RuntimeEntry {
+                    default: String::new(),
+                },
             },
             app_scan: AppScanConfig {
                 exclude_patterns: vec![
@@ -129,5 +135,3 @@ impl Config {
         Ok(())
     }
 }
-
-

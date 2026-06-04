@@ -104,14 +104,14 @@ pub fn list_installed(home: &Path, kind: RuntimeKind) -> anyhow::Result<Vec<(Str
     for entry in std::fs::read_dir(&versions_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
-            if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                // Strip the "v" prefix from directory names
-                if let Some(ver) = dir_name.strip_prefix('v') {
-                    versions.push((ver.to_string(), path));
-                } else {
-                    versions.push((dir_name.to_string(), path));
-                }
+        if path.is_dir()
+            && let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
+        {
+            // Strip the "v" prefix from directory names
+            if let Some(ver) = dir_name.strip_prefix('v') {
+                versions.push((ver.to_string(), path));
+            } else {
+                versions.push((dir_name.to_string(), path));
             }
         }
     }
@@ -140,11 +140,10 @@ pub fn get_active_version(home: &Path, kind: RuntimeKind) -> Option<String> {
 
     // Extract version from the directory path
     // Path looks like: ~/.windevkit/versions/node/v22.11.0
-    if let Some(dir_name) = target.file_name().and_then(|n| n.to_str()) {
-        Some(dir_name.trim_start_matches('v').to_string())
-    } else {
-        None
-    }
+    target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|dir_name| dir_name.trim_start_matches('v').to_string())
 }
 
 #[cfg(test)]

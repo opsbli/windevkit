@@ -36,10 +36,7 @@
 
 从 [GitHub Releases](https://github.com/opsbli/windevkit/releases) 下载 `windevkit-x86_64-pc-windows-msvc.zip`，解压到任意目录。
 
-或者用 PowerShell 一键安装：
-```powershell
-# TODO: get-windevkit.ps1
-```
+或者先从 Releases 下载 zip，解压后把 `windevkit.exe` 放到 PATH 中。
 
 ### 2. 初始化
 

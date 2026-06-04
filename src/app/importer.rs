@@ -47,8 +47,16 @@ pub fn import_from(toolbox_dir: &Path, interactive: bool) -> anyhow::Result<()> 
     }
 
     let manifest = Manifest::load(&manifest_path)?;
-    println!("{} Importing toolbox from {}", "📥".bold(), toolbox_dir.display());
-    println!("   Found {} apps, {} runtimes", manifest.apps.len(), manifest.runtimes.len());
+    println!(
+        "{} Importing toolbox from {}",
+        "📥".bold(),
+        toolbox_dir.display()
+    );
+    println!(
+        "   Found {} apps, {} runtimes",
+        manifest.apps.len(),
+        manifest.runtimes.len()
+    );
 
     let mut summary = ImportSummary {
         runtime_results: Vec::new(),
@@ -56,7 +64,9 @@ pub fn import_from(toolbox_dir: &Path, interactive: bool) -> anyhow::Result<()> 
     };
 
     for rt in &manifest.runtimes {
-        summary.runtime_results.push(import_runtime(rt, interactive)?);
+        summary
+            .runtime_results
+            .push(import_runtime(rt, interactive)?);
     }
 
     for app in &manifest.apps {
@@ -190,13 +200,20 @@ fn import_app(app: &AppEntry, interactive: bool) -> anyhow::Result<ItemResult> {
                 }
             }
 
-            let local_result = run_with_failure_policy(interactive, || install_local_artifact(app, local));
+            let local_result =
+                run_with_failure_policy(interactive, || install_local_artifact(app, local));
             return Ok(match local_result {
-                Ok(ItemStatus::Success) => success_app(app, format!("installed from {}", local.display())),
+                Ok(ItemStatus::Success) => {
+                    success_app(app, format!("installed from {}", local.display()))
+                }
                 Ok(ItemStatus::Skipped) => skipped_app(app, "user skipped after failure"),
                 Ok(ItemStatus::Failed) => failed_app(app, "local artifact install failed"),
                 Err(err) => {
-                    println!("  {} {} local install failed, trying winget fallback...", "ℹ".yellow(), app.name);
+                    println!(
+                        "  {} {} local install failed, trying winget fallback...",
+                        "ℹ".yellow(),
+                        app.name
+                    );
                     import_winget_fallback(app, interactive, Some(err.to_string()))?
                 }
             });
@@ -317,7 +334,12 @@ fn extract_zip_to_tools(app: &AppEntry, archive: &Path) -> anyhow::Result<()> {
             std::io::copy(&mut entry, &mut outfile)?;
         }
     }
-    println!("  {} {} extracted to {}", "✓".green(), app.name, target_dir.display());
+    println!(
+        "  {} {} extracted to {}",
+        "✓".green(),
+        app.name,
+        target_dir.display()
+    );
     Ok(())
 }
 
@@ -329,7 +351,12 @@ fn install_portable_dir(app: &AppEntry, src: &Path) -> anyhow::Result<()> {
     } else {
         anyhow::bail!("portable source is not a directory: {}", src.display());
     }
-    println!("  {} {} installed to {}", "✓".green(), app.name, target_dir.display());
+    println!(
+        "  {} {} installed to {}",
+        "✓".green(),
+        app.name,
+        target_dir.display()
+    );
     Ok(())
 }
 
@@ -365,7 +392,11 @@ fn install_via_winget(app: &AppEntry) -> anyhow::Result<()> {
         println!("  {} {} installed via winget", "✓".green(), app.name);
         Ok(())
     } else {
-        anyhow::bail!("{} failed to install via winget: {:?}", app.name, status.code())
+        anyhow::bail!(
+            "{} failed to install via winget: {:?}",
+            app.name,
+            status.code()
+        )
     }
 }
 
@@ -387,7 +418,11 @@ fn print_summary(summary: &ImportSummary) {
     println!();
     println!("{} Import summary", "📋".bold());
 
-    for result in summary.runtime_results.iter().chain(summary.app_results.iter()) {
+    for result in summary
+        .runtime_results
+        .iter()
+        .chain(summary.app_results.iter())
+    {
         let status = match result.status {
             ItemStatus::Success => "✓".green(),
             ItemStatus::Skipped => "→".yellow(),
@@ -407,7 +442,11 @@ fn print_summary(summary: &ImportSummary) {
     println!();
     println!(
         "{} Total: {}  Success: {}  Skipped: {}  Failed: {}",
-        if failed == 0 { "✅".green().bold() } else { "⚠".yellow().bold() },
+        if failed == 0 {
+            "✅".green().bold()
+        } else {
+            "⚠".yellow().bold()
+        },
         total,
         success.to_string().green().bold(),
         skipped.to_string().yellow().bold(),

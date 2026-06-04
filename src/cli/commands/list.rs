@@ -19,10 +19,7 @@ pub fn execute(args: &ListArgs) -> anyhow::Result<()> {
             "ℹ".yellow(),
             kind.to_string().bold()
         );
-        println!(
-            "  Use: windevkit install {} <version>",
-            kind
-        );
+        println!("  Use: windevkit install {} <version>", kind);
         return Ok(());
     }
 

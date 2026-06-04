@@ -84,7 +84,12 @@ pub fn install(
     // Check if already installed
     if version_dir.exists() {
         tracing::info!("{} {} is already installed", kind, version);
-        println!("  {} {} {} already installed", "ℹ".yellow(), kind.to_string().bold(), version);
+        println!(
+            "  {} {} {} already installed",
+            "ℹ".yellow(),
+            kind.to_string().bold(),
+            version
+        );
         return Ok(());
     }
 
@@ -96,12 +101,22 @@ pub fn install(
         download::download("", &cache_dir, &archive_filename, Some(local_path))?
     } else {
         let download_url = url::build_download_url(kind, version, &config.core.mirror);
-        println!("  {} Downloading {} {}...", "📥".bold(), kind.to_string().bold(), version);
+        println!(
+            "  {} Downloading {} {}...",
+            "📥".bold(),
+            kind.to_string().bold(),
+            version
+        );
         download::download(&download_url, &cache_dir, &archive_filename, None)?
     };
 
     // Step 2: Extract
-    println!("  {} Extracting {} {}...", "📦".bold(), kind.to_string().bold(), version);
+    println!(
+        "  {} Extracting {} {}...",
+        "📦".bold(),
+        kind.to_string().bold(),
+        version
+    );
     extract::extract(&archive_path, version_dir.parent().unwrap_or(&home))?;
 
     // Rename extracted directory to v{version}
@@ -114,7 +129,12 @@ pub fn install(
     }
 
     // Step 3: Activate (set symlink)
-    println!("  {} Activating {} {}...", "🔗".bold(), kind.to_string().bold(), version);
+    println!(
+        "  {} Activating {} {}...",
+        "🔗".bold(),
+        kind.to_string().bold(),
+        version
+    );
     symlink::set_active(&active_link, &version_dir)?;
 
     // Step 4: Add to PATH if not already
@@ -226,7 +246,12 @@ pub fn uninstall(kind: RuntimeKind, version: &str) -> anyhow::Result<()> {
         update_default_version(kind, "")?;
     }
 
-    println!("  {} {} {} uninstalled", "🗑️".bold(), kind.to_string().bold(), version);
+    println!(
+        "  {} {} {} uninstalled",
+        "🗑️".bold(),
+        kind.to_string().bold(),
+        version
+    );
 
     Ok(())
 }

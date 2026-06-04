@@ -10,14 +10,8 @@ pub fn execute(verbose: bool) -> anyhow::Result<()> {
     println!();
     println!("{}", "📊 windevkit status".bold());
     println!("{}", "═".repeat(50).dimmed());
-    println!(
-        "  Home:       {}",
-        home.display().to_string().cyan()
-    );
-    println!(
-        "  Mirror:     {}",
-        config.core.mirror.cyan()
-    );
+    println!("  Home:       {}", home.display().to_string().cyan());
+    println!("  Mirror:     {}", config.core.mirror.cyan());
     println!(
         "  Dev Mode:   {}",
         if config.core.dev_mode {

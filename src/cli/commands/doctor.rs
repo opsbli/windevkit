@@ -1,7 +1,7 @@
 use colored::Colorize;
 
 use crate::config::Config;
-use crate::runtime::{self, path, symlink, RuntimeKind};
+use crate::runtime::{self, RuntimeKind, path, symlink};
 
 pub fn execute(fix: bool) -> anyhow::Result<()> {
     let home = Config::home_dir();
@@ -52,7 +52,9 @@ pub fn execute(fix: bool) -> anyhow::Result<()> {
                     if symlink::set_active(
                         &link,
                         &symlink::version_dir(&home, *kind, &latest.version),
-                    ).is_ok() {
+                    )
+                    .is_ok()
+                    {
                         let target = symlink::read_link(&link)
                             .map(|p| p.display().to_string())
                             .unwrap_or_default();
@@ -112,7 +114,10 @@ pub fn execute(fix: bool) -> anyhow::Result<()> {
             "       reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock /t REG_DWORD /v AllowDevelopmentWithoutDevLicense /d 1 /f"
         );
         if fix {
-            println!("     {} Cannot auto-enable Developer Mode (requires admin rights).", "⚠".yellow());
+            println!(
+                "     {} Cannot auto-enable Developer Mode (requires admin rights).",
+                "⚠".yellow()
+            );
             println!("       Run the reg command above as Administrator.");
         }
         all_ok = false;
@@ -122,18 +127,17 @@ pub fn execute(fix: bool) -> anyhow::Result<()> {
     if all_ok {
         println!("{} All checks passed!", "✅".green().bold());
     } else {
-        println!("{} Some issues detected. Use --fix to auto-repair.", "⚠".yellow().bold());
+        println!(
+            "{} Some issues detected. Use --fix to auto-repair.",
+            "⚠".yellow().bold()
+        );
     }
 
     Ok(())
 }
 
 fn print_check(label: &str, ok: bool) {
-    let mark = if ok {
-        "✓".green()
-    } else {
-        "✗".red()
-    };
+    let mark = if ok { "✓".green() } else { "✗".red() };
     println!("  {}  {}", mark, label);
 }
 

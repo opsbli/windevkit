@@ -1,6 +1,6 @@
 use clap::Args;
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 
@@ -39,11 +39,16 @@ pub fn execute_with(args: &InitArgs, mirror: Option<&str>) -> anyhow::Result<()>
     } else {
         "✗ Disabled".red().bold()
     };
-    println!("  {}  Windows Developer Mode... {}", "🔍".bold(), dev_mode_status);
+    println!(
+        "  {}  Windows Developer Mode... {}",
+        "🔍".bold(),
+        dev_mode_status
+    );
 
     // Step 2: Create directory structure
     let dirs = create_directories(&home)?;
-    println!("  {}  Creating directory structure... {}",
+    println!(
+        "  {}  Creating directory structure... {}",
         "📂".bold(),
         format!("{} directories created", dirs.len()).green().bold()
     );
@@ -51,13 +56,17 @@ pub fn execute_with(args: &InitArgs, mirror: Option<&str>) -> anyhow::Result<()>
     // Step 3: Write default config
     let mut config = Config::default();
     config.core.dev_mode = dev_mode;
-    if let Some(m) = mirror {
-        if !m.is_empty() {
-            config.core.mirror = m.to_string();
-        }
+    if let Some(m) = mirror
+        && !m.is_empty()
+    {
+        config.core.mirror = m.to_string();
     }
     config.save()?;
-    println!("  {}  Writing config.toml... {}", "📝".bold(), "✓".green().bold());
+    println!(
+        "  {}  Writing config.toml... {}",
+        "📝".bold(),
+        "✓".green().bold()
+    );
 
     // Step 4: Summary
     println!();
@@ -65,17 +74,28 @@ pub fn execute_with(args: &InitArgs, mirror: Option<&str>) -> anyhow::Result<()>
     println!();
     println!("  Home directory:  {}", home.display());
     println!("  Config file:     {}", Config::config_path().display());
-    println!("  Developer Mode:  {}", if dev_mode { "Enabled" } else { "Disabled" });
+    println!(
+        "  Developer Mode:  {}",
+        if dev_mode { "Enabled" } else { "Disabled" }
+    );
 
     // Guide user if Developer Mode is not enabled
     if !dev_mode {
         println!();
-        println!("{}", "💡 Recommended: Enable Windows Developer Mode for symlink support.".yellow());
+        println!(
+            "{}",
+            "💡 Recommended: Enable Windows Developer Mode for symlink support.".yellow()
+        );
         println!("   Run the following in PowerShell as Administrator:");
         println!();
-        println!("   {}", "reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock".cyan());
-        println!("   {}",
-            "/t REG_DWORD /v AllowDevelopmentWithoutDevLicense /d 1 /f".cyan());
+        println!(
+            "   {}",
+            "reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock".cyan()
+        );
+        println!(
+            "   {}",
+            "/t REG_DWORD /v AllowDevelopmentWithoutDevLicense /d 1 /f".cyan()
+        );
         println!();
         println!("   Or go to: Settings → Privacy & security → For developers → Developer Mode");
         println!("   Then run {} again.", "windevkit doctor --fix".bold());
@@ -84,7 +104,10 @@ pub fn execute_with(args: &InitArgs, mirror: Option<&str>) -> anyhow::Result<()>
     // Remind about PATH
     let active_bin = home.join("active").join("bin");
     println!();
-    println!("{}", "💡 After installing runtimes, add to your PATH:".yellow());
+    println!(
+        "{}",
+        "💡 After installing runtimes, add to your PATH:".yellow()
+    );
     println!("   {}", active_bin.display().to_string().cyan());
     println!("   (windevkit will handle this automatically during install)");
 
@@ -93,9 +116,9 @@ pub fn execute_with(args: &InitArgs, mirror: Option<&str>) -> anyhow::Result<()>
 
 /// Create the full windevkit directory structure.
 /// Returns a list of created directory paths.
-fn create_directories(home: &PathBuf) -> anyhow::Result<Vec<PathBuf>> {
+fn create_directories(home: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let dirs = vec![
-        home.clone(),
+        home.to_path_buf(),
         home.join("versions"),
         home.join("versions").join("node"),
         home.join("versions").join("java"),

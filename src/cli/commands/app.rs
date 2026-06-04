@@ -88,10 +88,26 @@ struct LastScanSelection {
 
 pub fn execute(cmd: &AppCommands) -> anyhow::Result<()> {
     match cmd {
-        AppCommands::Scan { interactive, filter, category } => cmd_scan(*interactive, filter.as_deref(), category.as_deref()),
+        AppCommands::Scan {
+            interactive,
+            filter,
+            category,
+        } => cmd_scan(*interactive, filter.as_deref(), category.as_deref()),
         AppCommands::Tui { filter, category } => cmd_tui(filter.as_deref(), category.as_deref()),
         AppCommands::AddPath { dir, name } => cmd_add_path(dir, name.as_deref()),
-        AppCommands::Export { output, filter, category, concurrency, yes } => cmd_export(output.as_deref(), filter.as_deref(), category.as_deref(), *concurrency, *yes),
+        AppCommands::Export {
+            output,
+            filter,
+            category,
+            concurrency,
+            yes,
+        } => cmd_export(
+            output.as_deref(),
+            filter.as_deref(),
+            category.as_deref(),
+            *concurrency,
+            *yes,
+        ),
         AppCommands::Import { path, yes } => cmd_import(path, *yes),
     }
 }
@@ -123,7 +139,10 @@ fn cmd_scan(interactive: bool, filter: Option<&str>, category: Option<&str>) -> 
         }
     }
 
-    println!("  Found {} applications", apps.len().to_string().green().bold());
+    println!(
+        "  Found {} applications",
+        apps.len().to_string().green().bold()
+    );
     print_grouped_apps(&apps);
 
     if interactive {
@@ -150,7 +169,9 @@ fn cmd_scan(interactive: bool, filter: Option<&str>, category: Option<&str>) -> 
             "  {} You can also use {} and {}.",
             "🔎".bold(),
             "--filter <keyword>".bold().cyan(),
-            "--category <Browser|IDE|Runtime|Dev Tool|Utility|Other>".bold().cyan()
+            "--category <Browser|IDE|Runtime|Dev Tool|Utility|Other>"
+                .bold()
+                .cyan()
         );
         println!(
             "  {} Or run {} / {}.",
@@ -189,11 +210,15 @@ fn cmd_tui(filter: Option<&str>, category: Option<&str>) -> anyhow::Result<()> {
         return Ok(());
     }
     save_last_selection(&selected)?;
-    println!("  {} Saved selection: {} apps", "💾".bold(), selected.len().to_string().green().bold());
+    println!(
+        "  {} Saved selection: {} apps",
+        "💾".bold(),
+        selected.len().to_string().green().bold()
+    );
     Ok(())
 }
 
-fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
+fn cmd_add_path(dir: &Path, name: Option<&str>) -> anyhow::Result<()> {
     if !dir.exists() {
         anyhow::bail!("Directory not found: {}", dir.display());
     }
@@ -239,7 +264,13 @@ fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str>, concurrency: Option<usize>, yes: bool) -> anyhow::Result<()> {
+fn cmd_export(
+    output: Option<&Path>,
+    filter: Option<&str>,
+    category: Option<&str>,
+    concurrency: Option<usize>,
+    yes: bool,
+) -> anyhow::Result<()> {
     let config = Config::load()?;
     let home = Config::home_dir();
     let export_dir = output
@@ -272,7 +303,10 @@ fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str
         apps.into_iter().filter(|a| a.selected).collect()
     } else {
         println!();
-        println!("{} One-step export flow: scan → TUI select → export", "🚀".bold());
+        println!(
+            "{} One-step export flow: scan → TUI select → export",
+            "🚀".bold()
+        );
         let selected = app::tui::run(apps)?;
         save_last_selection(&selected)?;
         println!(
@@ -302,14 +336,21 @@ fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str
             .prompt()?
     };
 
-    let download_concurrency = concurrency.unwrap_or(config.app_export.download_concurrency).max(1);
+    let download_concurrency = concurrency
+        .unwrap_or(config.app_export.download_concurrency)
+        .max(1);
     println!(
         "  {} Effective download concurrency: {}",
         "⚡".bold(),
         download_concurrency.to_string().cyan().bold()
     );
 
-    app::export_to(&export_dir, &selected_apps, include_runtimes, download_concurrency)?;
+    app::export_to(
+        &export_dir,
+        &selected_apps,
+        include_runtimes,
+        download_concurrency,
+    )?;
     Ok(())
 }
 
@@ -324,10 +365,7 @@ fn cmd_import(path: &Path, yes: bool) -> anyhow::Result<()> {
             "⚠".yellow().bold(),
             path.display()
         );
-        if !Confirm::new("Continue?")
-            .with_default(true)
-            .prompt()?
-        {
+        if !Confirm::new("Continue?").with_default(true).prompt()? {
             println!("Import cancelled.");
             return Ok(());
         }
@@ -341,12 +379,20 @@ fn print_grouped_apps(apps: &[AppEntry]) {
     let mut groups: BTreeMap<&'static str, Vec<&AppEntry>> = BTreeMap::new();
     for app in apps {
         let category = app::category_for_app(app);
-        groups.entry(Box::leak(category.into_boxed_str())).or_default().push(app);
+        groups
+            .entry(Box::leak(category.into_boxed_str()))
+            .or_default()
+            .push(app);
     }
 
     for (category, group) in groups {
         println!();
-        println!("  {} {} ({})", category_icon(category), category.bold(), group.len());
+        println!(
+            "  {} {} ({})",
+            category_icon(category),
+            category.bold(),
+            group.len()
+        );
         for app in group {
             let source_tag = match app.source {
                 app::AppSource::Winget => "winget".cyan(),
@@ -356,7 +402,11 @@ fn print_grouped_apps(apps: &[AppEntry]) {
             };
             println!(
                 "    {} {:35} v{} [{}]",
-                if app.selected { "☑".green() } else { "☐".dimmed() },
+                if app.selected {
+                    "☑".green()
+                } else {
+                    "☐".dimmed()
+                },
                 truncate_name(&app.name, 35),
                 app.version,
                 source_tag

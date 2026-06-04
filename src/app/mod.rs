@@ -7,8 +7,8 @@ pub mod rules;
 pub mod scanner;
 pub mod tui;
 
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Source of an application entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

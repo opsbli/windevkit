@@ -39,13 +39,13 @@ pub fn ensure_user_rules_file() -> anyhow::Result<()> {
 
 pub fn load_all_rules() -> Vec<AppRule> {
     let mut rules = built_in_rules();
-    if let Ok(user) = load_user_rules() {
-        if !user.rules.is_empty() {
-            // user rules override built-ins by precedence, so put them first
-            let mut merged = user.rules;
-            merged.extend(rules);
-            rules = merged;
-        }
+    if let Ok(user) = load_user_rules()
+        && !user.rules.is_empty()
+    {
+        // user rules override built-ins by precedence, so put them first
+        let mut merged = user.rules;
+        merged.extend(rules);
+        rules = merged;
     }
     rules
 }
@@ -53,39 +53,36 @@ pub fn load_all_rules() -> Vec<AppRule> {
 pub fn resolve_rule(app: &AppEntry) -> Option<AppRule> {
     let name = app.name.to_lowercase();
     let id = app.id.to_lowercase();
-    load_all_rules()
-        .into_iter()
-        .find(|r| {
-            let m = r.r#match.to_lowercase();
-            !m.is_empty() && (name.contains(&m) || id.contains(&m))
-        })
+    load_all_rules().into_iter().find(|r| {
+        let m = r.r#match.to_lowercase();
+        !m.is_empty() && (name.contains(&m) || id.contains(&m))
+    })
 }
 
 pub fn effective_category(app: &AppEntry) -> String {
-    if let Some(rule) = resolve_rule(app) {
-        if let Some(cat) = rule.category {
-            if !cat.trim().is_empty() {
-                return cat;
-            }
-        }
+    if let Some(rule) = resolve_rule(app)
+        && let Some(cat) = rule.category
+        && !cat.trim().is_empty()
+    {
+        return cat;
     }
     heuristic_category(app).to_string()
 }
 
 pub fn effective_silent_args(app: &AppEntry) -> Option<String> {
-    if let Some(args) = &app.silent_args {
-        if !args.trim().is_empty() {
-            return Some(args.clone());
-        }
+    if let Some(args) = &app.silent_args
+        && !args.trim().is_empty()
+    {
+        return Some(args.clone());
     }
     resolve_rule(app).and_then(|r| r.silent_args)
 }
 
 pub fn effective_installer_type(app: &AppEntry) -> Option<String> {
-    if let Some(installer_type) = &app.installer_type {
-        if !installer_type.trim().is_empty() {
-            return Some(installer_type.clone());
-        }
+    if let Some(installer_type) = &app.installer_type
+        && !installer_type.trim().is_empty()
+    {
+        return Some(installer_type.clone());
     }
     resolve_rule(app).and_then(|r| r.installer_type)
 }
@@ -108,7 +105,9 @@ fn built_in_rules() -> Vec<AppRule> {
     vec![
         AppRule {
             r#match: "google chrome".into(),
-            download_url: Some("https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe".into()),
+            download_url: Some(
+                "https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe".into(),
+            ),
             silent_args: Some("/silent /install".into()),
             installer_type: Some("exe".into()),
             category: Some("Browser".into()),
@@ -116,7 +115,9 @@ fn built_in_rules() -> Vec<AppRule> {
         },
         AppRule {
             r#match: "firefox".into(),
-            download_url: Some("https://download.mozilla.org/?product=firefox-latest&os=win64&lang=zh-CN".into()),
+            download_url: Some(
+                "https://download.mozilla.org/?product=firefox-latest&os=win64&lang=zh-CN".into(),
+            ),
             silent_args: Some("-ms".into()),
             installer_type: Some("exe".into()),
             category: Some("Browser".into()),
@@ -124,7 +125,9 @@ fn built_in_rules() -> Vec<AppRule> {
         },
         AppRule {
             r#match: "visual studio code".into(),
-            download_url: Some("https://update.code.visualstudio.com/latest/win32-x64-user/stable".into()),
+            download_url: Some(
+                "https://update.code.visualstudio.com/latest/win32-x64-user/stable".into(),
+            ),
             silent_args: Some("/verysilent /suppressmsgboxes".into()),
             installer_type: Some("exe".into()),
             category: Some("IDE".into()),
@@ -267,13 +270,65 @@ fn heuristic_category(app: &AppEntry) -> &'static str {
 
     if contains_any(&name, &["chrome", "firefox", "edge", "browser"]) {
         "Browser"
-    } else if contains_any(&name, &["intellij", "pycharm", "webstorm", "goland", "rustrover", "android studio", "visual studio code", "zed", "windsurf", "cursor", "idea"]) {
+    } else if contains_any(
+        &name,
+        &[
+            "intellij",
+            "pycharm",
+            "webstorm",
+            "goland",
+            "rustrover",
+            "android studio",
+            "visual studio code",
+            "zed",
+            "windsurf",
+            "cursor",
+            "idea",
+        ],
+    ) {
         "IDE"
-    } else if contains_any(&name, &["jdk", "java", "python", "node", "go programming language", "rustup", "maven", "powershell", "wsl"]) {
+    } else if contains_any(
+        &name,
+        &[
+            "jdk",
+            "java",
+            "python",
+            "node",
+            "go programming language",
+            "rustup",
+            "maven",
+            "powershell",
+            "wsl",
+        ],
+    ) {
         "Runtime"
-    } else if contains_any(&name, &["git", "docker", "cmake", "navicat", "dbeaver", "apifox", "postman", "zellij", "warp", "termius", "obsidian"]) {
+    } else if contains_any(
+        &name,
+        &[
+            "git", "docker", "cmake", "navicat", "dbeaver", "apifox", "postman", "zellij", "warp",
+            "termius", "obsidian",
+        ],
+    ) {
         "Dev Tool"
-    } else if contains_any(&name, &["qq", "微信", "wechat", "wps", "迅雷", "todesk", "bandizip", "listary", "directory opus", "clash", "vpn", "music", "player", "office"]) {
+    } else if contains_any(
+        &name,
+        &[
+            "qq",
+            "微信",
+            "wechat",
+            "wps",
+            "迅雷",
+            "todesk",
+            "bandizip",
+            "listary",
+            "directory opus",
+            "clash",
+            "vpn",
+            "music",
+            "player",
+            "office",
+        ],
+    ) {
         "Utility"
     } else if contains_any(&id, &["chrome", "firefox", "edge"]) {
         "Browser"
@@ -309,7 +364,8 @@ download_url = "https://example.com/tool.zip"
 installer_type = "zip"
 category = "Utility"
 portable = true
-"#.to_string()
+"#
+    .to_string()
 }
 
 fn contains_any(value: &str, needles: &[&str]) -> bool {

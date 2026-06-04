@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use colored::Colorize;
 
@@ -10,7 +10,6 @@ use crate::app::manifest::Manifest;
 use crate::app::{self, AppEntry, AppRuntimeEntry};
 use crate::config::Config;
 use crate::runtime::{self, RuntimeKind};
-
 
 #[derive(Debug, Clone)]
 struct DownloadTask {
@@ -51,7 +50,11 @@ pub fn export_to(
     std::fs::create_dir_all(&portables_dir)?;
     std::fs::create_dir_all(&runtimes_dir)?;
 
-    println!("{} Exporting toolbox to {}", "📦".bold(), output_dir.display());
+    println!(
+        "{} Exporting toolbox to {}",
+        "📦".bold(),
+        output_dir.display()
+    );
     let download_concurrency = download_concurrency.max(1);
     println!(
         "{} Download concurrency: {}",
@@ -96,24 +99,28 @@ pub fn export_to(
         &mut summary,
     )?;
 
-    let exported_runtimes = export_runtimes(
-        runtime_download_plan.entries,
-        &result_map,
-        &mut summary,
-    );
+    let exported_runtimes =
+        export_runtimes(runtime_download_plan.entries, &result_map, &mut summary);
 
     let manifest = Manifest::new(exported_apps.clone(), exported_runtimes.clone());
     let manifest_path = output_dir.join("manifest.toml");
     manifest.save(&manifest_path)?;
 
     let report_path = output_dir.join("apps.md");
-    std::fs::write(&report_path, generate_apps_report(&exported_apps, &exported_runtimes))?;
+    std::fs::write(
+        &report_path,
+        generate_apps_report(&exported_apps, &exported_runtimes),
+    )?;
 
     let zip_path = output_dir.with_extension("zip");
     create_zip_archive(output_dir, &zip_path)?;
 
     println!();
-    println!("{} Toolbox exported to {}", "✅".green().bold(), output_dir.display());
+    println!(
+        "{} Toolbox exported to {}",
+        "✅".green().bold(),
+        output_dir.display()
+    );
     println!("   Size: {}", format_size(dir_size(output_dir)?));
     println!("   Report: {}", report_path.display());
     println!("   Zip: {}", zip_path.display());
@@ -143,16 +150,16 @@ fn build_app_download_plan(selected_apps: &[AppEntry], installers_dir: &Path) ->
     let mut tasks = Vec::new();
 
     for app in selected_apps {
-        if let Some(rule) = app::rules::resolve_rule(app) {
-            if let Some(url) = rule.download_url.clone() {
-                tasks.push(DownloadTask {
-                    key: app_download_key(app),
-                    label: format!("app:{}", app.name),
-                    filename: filename_from_rule_or_url(app, &rule, &url),
-                    url,
-                    target_dir: installers_dir.to_path_buf(),
-                });
-            }
+        if let Some(rule) = app::rules::resolve_rule(app)
+            && let Some(url) = rule.download_url.clone()
+        {
+            tasks.push(DownloadTask {
+                key: app_download_key(app),
+                label: format!("app:{}", app.name),
+                filename: filename_from_rule_or_url(app, &rule, &url),
+                url,
+                target_dir: installers_dir.to_path_buf(),
+            });
         }
     }
 
@@ -181,7 +188,12 @@ fn build_runtime_download_plan(
             });
 
             if dest.exists() {
-                println!("  {} runtime {} {} already cached", "↺".cyan(), kind, v.version);
+                println!(
+                    "  {} runtime {} {} already cached",
+                    "↺".cyan(),
+                    kind,
+                    v.version
+                );
                 continue;
             }
 
@@ -205,28 +217,34 @@ fn export_apps(
     result_map: &HashMap<String, DownloadOutcome>,
     summary: &mut ExportSummary,
 ) -> anyhow::Result<Vec<AppEntry>> {
-    let app_task_keys: HashMap<String, &DownloadTask> = app_tasks.iter().map(|t| (t.key.clone(), t)).collect();
+    let app_task_keys: HashMap<String, &DownloadTask> =
+        app_tasks.iter().map(|t| (t.key.clone(), t)).collect();
     let mut exported_apps = Vec::new();
 
     for app in selected_apps {
         let app_key = app_download_key(app);
-        if app_task_keys.contains_key(&app_key) {
-            if let Some(outcome) = result_map.get(&app_key) {
-                match &outcome.result {
-                    Ok(path) => {
-                        println!("  {} {} — {} saved", "✓".green(), app.name, path.display());
-                        let mut exported = app.clone();
-                        exported.install_path = Some(path.to_string_lossy().to_string());
-                        exported.silent_args = app::silent_args_for_app(app);
-                        exported.installer_type = app::installer_type_for_app(app);
-                        exported.portable = Some(app::portable_for_app(app));
-                        exported_apps.push(exported);
-                        summary.downloaded += 1;
-                        continue;
-                    }
-                    Err(e) => {
-                        println!("  {} {} — direct rule download failed: {}", "ℹ".yellow(), app.name, e);
-                    }
+        if app_task_keys.contains_key(&app_key)
+            && let Some(outcome) = result_map.get(&app_key)
+        {
+            match &outcome.result {
+                Ok(path) => {
+                    println!("  {} {} — {} saved", "✓".green(), app.name, path.display());
+                    let mut exported = app.clone();
+                    exported.install_path = Some(path.to_string_lossy().to_string());
+                    exported.silent_args = app::silent_args_for_app(app);
+                    exported.installer_type = app::installer_type_for_app(app);
+                    exported.portable = Some(app::portable_for_app(app));
+                    exported_apps.push(exported);
+                    summary.downloaded += 1;
+                    continue;
+                }
+                Err(e) => {
+                    println!(
+                        "  {} {} — direct rule download failed: {}",
+                        "ℹ".yellow(),
+                        app.name,
+                        e
+                    );
                 }
             }
         }
@@ -292,7 +310,13 @@ fn export_runtimes(
         if let Some(outcome) = result_map.get(&key) {
             match &outcome.result {
                 Ok(path) => {
-                    println!("  {} runtime {} {} — {} saved", "✓".green(), rt.tool, rt.version, path.display());
+                    println!(
+                        "  {} runtime {} {} — {} saved",
+                        "✓".green(),
+                        rt.tool,
+                        rt.version,
+                        path.display()
+                    );
                     summary.downloaded += 1;
                 }
                 Err(e) => {
@@ -305,12 +329,19 @@ fn export_runtimes(
     entries
 }
 
-fn run_downloads(tasks: Vec<DownloadTask>, concurrency: usize) -> anyhow::Result<Vec<DownloadOutcome>> {
+fn run_downloads(
+    tasks: Vec<DownloadTask>,
+    concurrency: usize,
+) -> anyhow::Result<Vec<DownloadOutcome>> {
     if tasks.is_empty() {
         return Ok(Vec::new());
     }
 
-    println!("{} Queued {} downloads", "📥".bold(), tasks.len().to_string().green().bold());
+    println!(
+        "{} Queued {} downloads",
+        "📥".bold(),
+        tasks.len().to_string().green().bold()
+    );
 
     let queue = Arc::new(Mutex::new(VecDeque::from(tasks)));
     let (tx, rx) = mpsc::channel();
@@ -326,7 +357,9 @@ fn run_downloads(tasks: Vec<DownloadTask>, concurrency: usize) -> anyhow::Result
                     guard.pop_front()
                 };
 
-                let Some(task) = task else { break; };
+                let Some(task) = task else {
+                    break;
+                };
                 println!("  {} {}", "↓".cyan(), task.label);
                 let result = crate::runtime::download::download(
                     &task.url,
@@ -366,7 +399,11 @@ fn runtime_download_key_str(tool: &str, version: &str) -> String {
     format!("runtime:{}:{}", tool, version)
 }
 
-fn filename_from_rule_or_url(app: &AppEntry, rule: &crate::app::rules::AppRule, url: &str) -> String {
+fn filename_from_rule_or_url(
+    app: &AppEntry,
+    rule: &crate::app::rules::AppRule,
+    url: &str,
+) -> String {
     if let Some(installer_type) = &rule.installer_type {
         let ext = installer_type.trim().trim_start_matches('.');
         return format!("{}.{}", app.id.replace(' ', "_"), ext);
@@ -446,7 +483,10 @@ fn add_dir_to_zip(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        let name = path.strip_prefix(base)?.to_string_lossy().replace('\\', "/");
+        let name = path
+            .strip_prefix(base)?
+            .to_string_lossy()
+            .replace('\\', "/");
 
         if path.is_dir() {
             if !name.is_empty() {
