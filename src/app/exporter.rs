@@ -4,7 +4,7 @@ use std::path::Path;
 
 use colored::Colorize;
 
-use crate::app::{AppEntry, AppRuntimeEntry};
+use crate::app::{self, AppEntry, AppRuntimeEntry};
 use crate::app::manifest::Manifest;
 use crate::config::Config;
 use crate::runtime::{self, RuntimeKind};
@@ -32,21 +32,41 @@ pub fn export_to(
     // Export app installers
     let mut exported_apps = Vec::new();
     for app in selected_apps {
+        if let Some(rule) = app::rules::resolve_rule(app) {
+            if let Some(url) = rule.download_url.clone() {
+                let filename = filename_from_rule_or_url(app, &rule, &url);
+                match crate::runtime::download::download(&url, &installers_dir, &filename, None) {
+                    Ok(path) => {
+                        println!("  {} {} — {} saved", "✓".green(), app.name, path.display());
+                        let mut exported = app.clone();
+                        exported.install_path = Some(path.to_string_lossy().to_string());
+                        exported.silent_args = app::silent_args_for_app(app);
+                        exported_apps.push(exported);
+                        continue;
+                    }
+                    Err(e) => {
+                        println!("  {} {} — direct rule download failed: {}", "ℹ".yellow(), app.name, e);
+                    }
+                }
+            }
+        }
+
         match app.source {
             crate::app::AppSource::Winget => {
-                // For winget apps, we try to download the installer
                 let installer_path = download_winget_installer(app, &installers_dir);
                 match installer_path {
                     Ok(path) => {
                         println!("  {} {} — {} saved", "✓".green(), app.name, path.display());
                         let mut exported = app.clone();
                         exported.install_path = Some(path.to_string_lossy().to_string());
+                        exported.silent_args = app::silent_args_for_app(app);
                         exported_apps.push(exported);
                     }
                     Err(e) => {
                         println!("  {} {} — {} (will install via winget)", "ℹ".yellow(), app.name, e);
-                        // Still include in manifest, just without local installer
-                        exported_apps.push(app.clone());
+                        let mut exported = app.clone();
+                        exported.silent_args = app::silent_args_for_app(app);
+                        exported_apps.push(exported);
                     }
                 }
             }
@@ -70,8 +90,9 @@ pub fn export_to(
                 }
             }
             _ => {
-                // Registry or other: include in manifest but mark as winget-installable
-                exported_apps.push(app.clone());
+                let mut exported = app.clone();
+                exported.silent_args = app::silent_args_for_app(app);
+                exported_apps.push(exported);
             }
         }
     }
@@ -144,6 +165,20 @@ fn download_winget_installer(_app: &AppEntry, _target_dir: &Path) -> anyhow::Res
 }
 
 /// Recursively copy a directory.
+fn filename_from_rule_or_url(app: &AppEntry, rule: &crate::app::rules::AppRule, url: &str) -> String {
+    if let Some(installer_type) = &rule.installer_type {
+        let ext = installer_type.trim().trim_start_matches('.');
+        return format!("{}.{}", app.id.replace(' ', "_"), ext);
+    }
+    let no_query = url.split('?').next().unwrap_or(url);
+    let last = no_query.rsplit('/').next().unwrap_or("installer.exe");
+    if last.is_empty() || !last.contains('.') {
+        format!("{}.exe", app.id.replace(' ', "_"))
+    } else {
+        last.to_string()
+    }
+}
+
 fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
     if !dest.exists() {
         std::fs::create_dir_all(dest)?;
@@ -235,8 +270,8 @@ fn generate_apps_report(apps: &[AppEntry], runtimes: &[AppRuntimeEntry]) -> Stri
     out.push_str(&format!("- Runtimes: {}\n\n", runtimes.len()));
 
     out.push_str("## Applications\n\n");
-    out.push_str("| Name | Version | Source | Local Path |\n");
-    out.push_str("|---|---:|---|---|\n");
+    out.push_str("| Name | Version | Source | Category | Local Path |\n");
+    out.push_str("|---|---:|---|---|---|\n");
     for app in apps {
         let source = match app.source {
             crate::app::AppSource::Winget => "winget",
@@ -244,8 +279,9 @@ fn generate_apps_report(apps: &[AppEntry], runtimes: &[AppRuntimeEntry]) -> Stri
             crate::app::AppSource::Portable => "portable",
             crate::app::AppSource::Manual => "manual",
         };
+        let category = app::category_for_app(app);
         let path = app.install_path.as_deref().unwrap_or("");
-        out.push_str(&format!("| {} | {} | {} | {} |\n", app.name.replace('|', "\\|"), app.version.replace('|', "\\|"), source, path.replace('|', "\\|")));
+        out.push_str(&format!("| {} | {} | {} | {} | {} |\n", app.name.replace('|', "\\|"), app.version.replace('|', "\\|"), source, category.replace('|', "\\|"), path.replace('|', "\\|")));
     }
 
     out.push_str("\n## Runtimes\n\n");

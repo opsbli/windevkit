@@ -3,7 +3,9 @@
 pub mod exporter;
 pub mod importer;
 pub mod manifest;
+pub mod rules;
 pub mod scanner;
+pub mod tui;
 
 use std::path::Path;
 use serde::{Deserialize, Serialize};
@@ -57,4 +59,12 @@ pub fn export_to(
 /// Import and restore from a toolbox directory.
 pub fn import_from(directory: &Path, interactive: bool) -> anyhow::Result<()> {
     importer::import_from(directory, interactive)
+}
+
+pub fn category_for_app(app: &AppEntry) -> String {
+    rules::effective_category(app)
+}
+
+pub fn silent_args_for_app(app: &AppEntry) -> Option<String> {
+    rules::effective_silent_args(app)
 }

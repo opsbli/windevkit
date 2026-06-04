@@ -26,6 +26,17 @@ pub enum AppCommands {
         category: Option<String>,
     },
 
+    /// Open full-screen TUI selector
+    Tui {
+        /// Filter apps by keyword before opening TUI
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Filter apps by category before opening TUI
+        #[arg(long)]
+        category: Option<String>,
+    },
+
     /// Add a portable app directory
     AddPath {
         /// Path to the portable app directory
@@ -74,6 +85,7 @@ struct LastScanSelection {
 pub fn execute(cmd: &AppCommands) -> anyhow::Result<()> {
     match cmd {
         AppCommands::Scan { interactive, filter, category } => cmd_scan(*interactive, filter.as_deref(), category.as_deref()),
+        AppCommands::Tui { filter, category } => cmd_tui(filter.as_deref(), category.as_deref()),
         AppCommands::AddPath { dir, name } => cmd_add_path(dir, name.as_deref()),
         AppCommands::Export { output, filter, category, yes } => cmd_export(output.as_deref(), filter.as_deref(), category.as_deref(), *yes),
         AppCommands::Import { path, yes } => cmd_import(path, *yes),
@@ -91,7 +103,7 @@ fn cmd_scan(interactive: bool, filter: Option<&str>, category: Option<&str>) -> 
         apps.retain(|a| a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f));
     }
     if let Some(c) = category {
-        apps.retain(|a| category_for_app(a).eq_ignore_ascii_case(c));
+        apps.retain(|a| app::category_for_app(a).eq_ignore_ascii_case(c));
     }
 
     if apps.is_empty() {
@@ -137,12 +149,43 @@ fn cmd_scan(interactive: bool, filter: Option<&str>, category: Option<&str>) -> 
             "--category <Browser|IDE|Runtime|Dev Tool|Utility|Other>".bold().cyan()
         );
         println!(
-            "  {} Or run {} for one-step export.",
+            "  {} Or run {} / {}.",
             "📦".bold(),
-            "windevkit app export".bold().cyan()
+            "windevkit app export".bold().cyan(),
+            "windevkit app tui".bold().cyan()
         );
     }
 
+    Ok(())
+}
+
+fn cmd_tui(filter: Option<&str>, category: Option<&str>) -> anyhow::Result<()> {
+    println!("{} Loading app TUI...", "🖥️".bold());
+    let config = Config::load()?;
+    let mut apps = app::scan(&config.app_scan.exclude_patterns)?;
+
+    if let Some(f) = filter {
+        let f = f.to_lowercase();
+        apps.retain(|a| a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f));
+    }
+    if let Some(c) = category {
+        apps.retain(|a| app::category_for_app(a).eq_ignore_ascii_case(c));
+    }
+
+    if let Some(saved) = load_last_selection()? {
+        let selected: HashSet<String> = saved.ids.into_iter().collect();
+        for app in &mut apps {
+            app.selected = selected.contains(&app.id);
+        }
+    }
+
+    let selected = app::tui::run(apps)?;
+    if selected.is_empty() {
+        println!("  {} No selection saved.", "ℹ".yellow());
+        return Ok(());
+    }
+    save_last_selection(&selected)?;
+    println!("  {} Saved selection: {} apps", "💾".bold(), selected.len().to_string().green().bold());
     Ok(())
 }
 
@@ -204,7 +247,7 @@ fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str
         apps.retain(|a| a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f));
     }
     if let Some(c) = category {
-        apps.retain(|a| category_for_app(a).eq_ignore_ascii_case(c));
+        apps.retain(|a| app::category_for_app(a).eq_ignore_ascii_case(c));
     }
 
     if apps.is_empty() {
@@ -223,8 +266,8 @@ fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str
         apps.into_iter().filter(|a| a.selected).collect()
     } else {
         println!();
-        println!("{} One-step export flow: scan → select → export", "🚀".bold());
-        let selected = select_apps_interactive(apps)?;
+        println!("{} One-step export flow: scan → TUI select → export", "🚀".bold());
+        let selected = app::tui::run(apps)?;
         save_last_selection(&selected)?;
         println!(
             "  {} Saved selection: {} apps",
@@ -284,7 +327,8 @@ fn cmd_import(path: &Path, yes: bool) -> anyhow::Result<()> {
 fn print_grouped_apps(apps: &[AppEntry]) {
     let mut groups: BTreeMap<&'static str, Vec<&AppEntry>> = BTreeMap::new();
     for app in apps {
-        groups.entry(category_for_app(app)).or_default().push(app);
+        let category = app::category_for_app(app);
+        groups.entry(Box::leak(category.into_boxed_str())).or_default().push(app);
     }
 
     for (category, group) in groups {
@@ -321,7 +365,7 @@ fn select_apps_interactive(apps: Vec<AppEntry>) -> anyhow::Result<Vec<AppEntry>>
         .map(|a| {
             format!(
                 "[{}] {} v{} [{}]",
-                category_for_app(a),
+                app::category_for_app(a),
                 a.name,
                 a.version,
                 source_label(&a.source)
@@ -346,7 +390,7 @@ fn select_apps_interactive(apps: Vec<AppEntry>) -> anyhow::Result<Vec<AppEntry>>
         .filter(|a| {
             let label = format!(
                 "[{}] {} v{} [{}]",
-                category_for_app(a),
+                app::category_for_app(a),
                 a.name,
                 a.version,
                 source_label(&a.source)
@@ -354,27 +398,6 @@ fn select_apps_interactive(apps: Vec<AppEntry>) -> anyhow::Result<Vec<AppEntry>>
             selections.contains(&label)
         })
         .collect())
-}
-
-fn category_for_app(app: &AppEntry) -> &'static str {
-    let name = app.name.to_lowercase();
-    let id = app.id.to_lowercase();
-
-    if contains_any(&name, &["chrome", "firefox", "edge", "browser"]) {
-        "Browser"
-    } else if contains_any(&name, &["intellij", "pycharm", "webstorm", "goland", "rustrover", "android studio", "visual studio code", "zed", "windsurf", "cursor", "idea"]) {
-        "IDE"
-    } else if contains_any(&name, &["jdk", "java", "python", "node", "go programming language", "rustup", "maven", "powershell", "wsl"]) {
-        "Runtime"
-    } else if contains_any(&name, &["git", "docker", "cmake", "navicat", "dbeaver", "apifox", "postman", "zellij", "warp", "termius", "obsidian"]) {
-        "Dev Tool"
-    } else if contains_any(&name, &["qq", "微信", "wechat", "wps", "迅雷", "todesk", "bandizip", "listary", "directory opus", "clash", "vpn", "music", "player", "office"]) {
-        "Utility"
-    } else if contains_any(&id, &["chrome", "firefox", "edge"]) {
-        "Browser"
-    } else {
-        "Other"
-    }
 }
 
 fn category_icon(category: &str) -> &'static str {
@@ -386,10 +409,6 @@ fn category_icon(category: &str) -> &'static str {
         "Utility" => "📦",
         _ => "📁",
     }
-}
-
-fn contains_any(value: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|n| value.contains(&n.to_lowercase()))
 }
 
 fn truncate_name(name: &str, max: usize) -> String {
