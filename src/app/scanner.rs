@@ -137,11 +137,11 @@ fn parse_winget_line(line: &str) -> (Option<String>, Option<String>, Option<Stri
 fn scan_registry() -> anyhow::Result<Vec<AppEntry>> {
     let mut apps = Vec::new();
 
-    // Check both 64-bit and 32-bit registry locations
+    // reg.exe outputs HKEY_LOCAL_MACHINE / HKEY_CURRENT_USER, not HKLM / HKCU
     let reg_paths = [
-        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
     ];
 
     for reg_path in &reg_paths {
@@ -220,16 +220,18 @@ fn get_registry_value(key: &str, value_name: &str, flags: u32) -> Option<String>
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parse: "    DisplayName    REG_SZ    Value"
+    // Parse reg.exe output: columns separated by 4+ spaces.
+    // Typical output: "    DisplayName    REG_SZ    Bandizip"
     for line in stdout.lines() {
-        let parts: Vec<&str> = line.splitn(4, ' ')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("HKEY_") {
+            continue;
+        }
+        // Split by 4+ spaces to get [key, type, value]
+        let parts: Vec<&str> = line.split("    ").collect();
         if parts.len() >= 3 {
-            // The value is the last part
-            let value = parts.last()?;
-            if !value.is_empty() && value != &value_name {
+            let value = parts[2].trim();
+            if !value.is_empty() && value != value_name {
                 return Some(value.to_string());
             }
         }
