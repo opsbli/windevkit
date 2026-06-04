@@ -139,15 +139,23 @@ fn parse_winget_line(line: &str) -> (Option<String>, Option<String>, Option<Stri
 
 /// Try to locate winget.exe reliably.
 fn find_winget_exe() -> Option<std::path::PathBuf> {
-    // 1) Direct PATH resolution
-    if let Ok(output) = std::process::Command::new("where")
-        .arg("winget")
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // 1) PowerShell Get-Command (works better with App Execution Aliases)
+    if let Ok(output) = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-Command winget -ErrorAction SilentlyContinue).Source",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
     {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(first) = stdout.lines().next() {
-                let p = std::path::PathBuf::from(first.trim());
+            if let Some(first) = stdout.lines().map(|s| s.trim()).find(|s| !s.is_empty()) {
+                let p = std::path::PathBuf::from(first);
                 if p.exists() {
                     return Some(p);
                 }
@@ -155,7 +163,24 @@ fn find_winget_exe() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2) WindowsApps app execution alias
+    // 2) where.exe PATH resolution
+    if let Ok(output) = std::process::Command::new("where.exe")
+        .arg("winget.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(first) = stdout.lines().map(|s| s.trim()).find(|s| !s.is_empty()) {
+                let p = std::path::PathBuf::from(first);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    // 3) WindowsApps app execution alias under LocalAppData
     if let Some(local) = dirs::data_local_dir() {
         let candidate = local.join("Microsoft").join("WindowsApps").join("winget.exe");
         if candidate.exists() {

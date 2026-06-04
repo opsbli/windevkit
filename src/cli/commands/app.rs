@@ -184,7 +184,16 @@ fn cmd_export(output: Option<&Path>, yes: bool) -> anyhow::Result<()> {
     let selected_apps = if yes {
         apps.into_iter().filter(|a| a.selected).collect()
     } else {
-        select_apps_interactive(apps)?
+        println!();
+        println!("{} One-step export flow: scan → select → export", "🚀".bold());
+        let selected = select_apps_interactive(apps)?;
+        save_last_selection(&selected)?;
+        println!(
+            "  {} Saved selection: {} apps",
+            "💾".bold(),
+            selected.len().to_string().green().bold()
+        );
+        selected
     };
 
     if selected_apps.is_empty() {
