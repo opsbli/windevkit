@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 
+use base64::Engine;
+use serde::Deserialize;
 use crate::app::{AppEntry, AppSource};
 
 /// Scan the system for installed applications.
@@ -10,6 +12,7 @@ use crate::app::{AppEntry, AppSource};
 /// Returns a merged, deduplicated list from all available sources.
 pub fn scan(exclude_patterns: &[String]) -> anyhow::Result<Vec<AppEntry>> {
     let mut all: Vec<AppEntry> = Vec::new();
+    let built_in = built_in_excludes();
 
     // Source 1: winget
     match scan_winget() {
@@ -36,8 +39,8 @@ pub fn scan(exclude_patterns: &[String]) -> anyhow::Result<Vec<AppEntry>> {
     // Deduplicate: keep the first occurrence (winget > registry)
     let merged = deduplicate(all);
 
-    // Apply exclude patterns
-    let filtered = apply_excludes(merged, exclude_patterns);
+    // Apply built-in excludes first, then user excludes
+    let filtered = apply_excludes(apply_excludes(merged, &built_in), exclude_patterns);
 
     tracing::info!("scan complete: {} apps after dedup+filter", filtered.len());
     Ok(filtered)
@@ -45,7 +48,8 @@ pub fn scan(exclude_patterns: &[String]) -> anyhow::Result<Vec<AppEntry>> {
 
 /// Scan apps via `winget list`.
 fn scan_winget() -> anyhow::Result<Vec<AppEntry>> {
-    let output = std::process::Command::new("winget")
+    let winget = find_winget_exe().ok_or_else(|| anyhow::anyhow!("winget not found: program not found"))?;
+    let output = std::process::Command::new(winget)
         .args(["list", "--accept-source-agreements"])
         .output()
         .map_err(|e| anyhow::anyhow!("winget not found: {}", e))?;
@@ -133,111 +137,131 @@ fn parse_winget_line(line: &str) -> (Option<String>, Option<String>, Option<Stri
     (None, None, None)
 }
 
-/// Scan apps from Windows registry.
-fn scan_registry() -> anyhow::Result<Vec<AppEntry>> {
-    let mut apps = Vec::new();
-
-    // reg.exe outputs HKEY_LOCAL_MACHINE / HKEY_CURRENT_USER, not HKLM / HKCU
-    let reg_paths = [
-        r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-    ];
-
-    for reg_path in &reg_paths {
-        match read_registry_uninstall(reg_path) {
-            Ok(entries) => apps.extend(entries),
-            Err(e) => tracing::debug!("Failed to read registry path {}: {}", reg_path, e),
-        }
-    }
-
-    Ok(apps)
-}
-
-/// Read subkeys from a registry uninstall path and extract app info.
-fn read_registry_uninstall(reg_path: &str) -> anyhow::Result<Vec<AppEntry>> {
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    // First list all subkeys
-    let output = std::process::Command::new("reg")
-        .args(["query", reg_path])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut apps = Vec::new();
-
-    for line in stdout.lines() {
-        let line = line.trim();
-        // Each subkey is listed as a registry path
-        if line.starts_with(reg_path) {
-            let subkey = line.trim();
-            // Read DisplayName and DisplayVersion from this subkey
-            if let Some(entry) = read_registry_entry(subkey) {
-                apps.push(entry);
-            }
-        }
-    }
-
-    Ok(apps)
-}
-
-/// Read a single registry subkey for display name and version.
-fn read_registry_entry(subkey: &str) -> Option<AppEntry> {
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    // Get DisplayName
-    let name = get_registry_value(subkey, "DisplayName", CREATE_NO_WINDOW)?;
-    // Skip Windows system entries
-    if name.starts_with("KB") || name.contains("Update for") || name.contains("Hotfix") {
-        return None;
-    }
-
-    let version = get_registry_value(subkey, "DisplayVersion", CREATE_NO_WINDOW)
-        .unwrap_or_default();
-
-    Some(AppEntry {
-        id: subkey.rsplit('\\').next().unwrap_or(&name).to_string(),
-        name,
-        version,
-        source: AppSource::Registry,
-        selected: true,
-        install_path: get_registry_value(subkey, "InstallLocation", CREATE_NO_WINDOW),
-        silent_args: None,
-    })
-}
-
-/// Get a single registry value by key and value name.
-fn get_registry_value(key: &str, value_name: &str, flags: u32) -> Option<String> {
-    let output = std::process::Command::new("reg")
-        .args(["query", key, "/v", value_name])
-        .creation_flags(flags)
+/// Try to locate winget.exe reliably.
+fn find_winget_exe() -> Option<std::path::PathBuf> {
+    // 1) Direct PATH resolution
+    if let Ok(output) = std::process::Command::new("where")
+        .arg("winget")
         .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(first) = stdout.lines().next() {
+                let p = std::path::PathBuf::from(first.trim());
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parse reg.exe output: columns separated by 4+ spaces.
-    // Typical output: "    DisplayName    REG_SZ    Bandizip"
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("HKEY_") {
-            continue;
-        }
-        // Split by 4+ spaces to get [key, type, value]
-        let parts: Vec<&str> = line.split("    ").collect();
-        if parts.len() >= 3 {
-            let value = parts[2].trim();
-            if !value.is_empty() && value != value_name {
-                return Some(value.to_string());
-            }
+    // 2) WindowsApps app execution alias
+    if let Some(local) = dirs::data_local_dir() {
+        let candidate = local.join("Microsoft").join("WindowsApps").join("winget.exe");
+        if candidate.exists() {
+            return Some(candidate);
         }
     }
 
     None
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryAppRow {
+    #[serde(rename = "Id")]
+    id: Option<String>,
+    #[serde(rename = "Name")]
+    name: Option<String>,
+    #[serde(rename = "Version")]
+    version: Option<String>,
+    #[serde(rename = "InstallPath")]
+    install_path: Option<String>,
+}
+
+/// Scan apps from Windows registry using ONE PowerShell process.
+fn scan_registry() -> anyhow::Result<Vec<AppEntry>> {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let script = r#"
+$paths = @(
+  'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+
+$result = foreach ($path in $paths) {
+  if (Test-Path $path) {
+    Get-ChildItem -Path $path -ErrorAction SilentlyContinue | ForEach-Object {
+      try {
+        $p = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+        if ($null -ne $p -and $null -ne $p.DisplayName -and [string]$p.DisplayName -ne '') {
+          [PSCustomObject]@{
+            Id = if ($_.PSChildName) { [string]$_.PSChildName } else { [string]$p.DisplayName }
+            Name = [string]$p.DisplayName
+            Version = if ($null -ne $p.DisplayVersion) { [string]$p.DisplayVersion } else { '' }
+            InstallPath = if ($null -ne $p.InstallLocation) { [string]$p.InstallLocation } else { '' }
+          }
+        }
+      } catch {}
+    }
+  }
+}
+
+$json = $result | ConvertTo-Json -Compress -Depth 3
+if ($null -eq $json) { $json = '[]' }
+[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]$json))
+"#;
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!("powershell registry scan failed")
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(stdout)
+        .map_err(|e| anyhow::anyhow!("base64 decode failed: {e}"))?;
+    let json = String::from_utf8(decoded)
+        .map_err(|e| anyhow::anyhow!("utf8 decode failed: {e}"))?;
+
+    let rows: Vec<RegistryAppRow> = serde_json::from_str(&json)
+        .or_else(|_| serde_json::from_str::<RegistryAppRow>(&json).map(|row| vec![row]))?;
+
+    let apps = rows
+        .into_iter()
+        .filter_map(|row| {
+            let name = row.name?.trim().to_string();
+            if name.is_empty()
+                || name.starts_with("KB")
+                || name.contains("Update for")
+                || name.contains("Hotfix")
+            {
+                return None;
+            }
+
+            Some(AppEntry {
+                id: row.id.unwrap_or_else(|| name.clone()),
+                name,
+                version: row.version.unwrap_or_default().trim().to_string(),
+                source: AppSource::Registry,
+                selected: true,
+                install_path: row
+                    .install_path
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty()),
+                silent_args: None,
+            })
+        })
+        .collect();
+
+    Ok(apps)
 }
 
 /// Deduplicate apps by name + version, keeping the first occurrence.
@@ -279,16 +303,63 @@ fn apply_excludes(apps: Vec<AppEntry>, patterns: &[String]) -> Vec<AppEntry> {
 
 /// Simple wildcard matching (* matches anything).
 fn matches_pattern(value: &str, pattern: &str) -> bool {
+    let value = value.to_lowercase();
+    let pattern = pattern.to_lowercase();
     if pattern == "*" {
         return true;
     }
-    if let Some(suffix) = pattern.strip_prefix('*') {
+    if pattern.starts_with('*') && pattern.ends_with('*') && pattern.len() > 2 {
+        let inner = &pattern[1..pattern.len() - 1];
+        value.contains(inner)
+    } else if let Some(suffix) = pattern.strip_prefix('*') {
         value.ends_with(suffix)
     } else if let Some(prefix) = pattern.strip_suffix('*') {
         value.starts_with(prefix)
     } else {
         value == pattern
     }
+}
+
+fn built_in_excludes() -> Vec<String> {
+    vec![
+        "KB*".into(),
+        "Microsoft Visual C++*".into(),
+        ".NET*".into(),
+        "Windows SDK*".into(),
+        "WinRT Intellisense*".into(),
+        "Universal CRT*".into(),
+        "Application Verifier*".into(),
+        "Windows App Certification Kit*".into(),
+        "Windows Desktop Extension SDK*".into(),
+        "Windows Team Extension SDK*".into(),
+        "Windows Mobile Extension SDK*".into(),
+        "Windows IoT Extension SDK*".into(),
+        "Windows Software Development Kit*".into(),
+        "Kits Configuration Installer".into(),
+        "Windows SDK EULA".into(),
+        "Windows SDK Redistributables".into(),
+        "Windows SDK AddOn".into(),
+        "WPT*".into(),
+        "vs_*".into(),
+        "icecap_*".into(),
+        "DiagnosticsHub_*".into(),
+        "VBA (*".into(),
+        "Python * Documentation*".into(),
+        "Python * Tcl/Tk Support*".into(),
+        "Python * Development Libraries*".into(),
+        "Python * pip Bootstrap*".into(),
+        "Python * Test Suite*".into(),
+        "Python * Standard Library*".into(),
+        "Microsoft Visual Studio Setup *".into(),
+        "Microsoft Visual Studio Installer".into(),
+        "VS *".into(),
+        "Microsoft System CLR Types for SQL Server*".into(),
+        "Mozilla Maintenance Service".into(),
+        "Microsoft Edge WebView2 Runtime".into(),
+        "Windows Subsystem for Linux".into(),
+        "Python Launcher".into(),
+        "vcpp_crt.redist.clickonce".into(),
+    ]
 }
 
 /// Guess silent install arguments for well-known apps by winget ID.

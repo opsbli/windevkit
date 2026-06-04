@@ -1,8 +1,10 @@
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use colored::Colorize;
 use inquire::{Confirm, MultiSelect};
+use serde::{Deserialize, Serialize};
 
 use crate::app::{self, AppEntry};
 use crate::config::Config;
@@ -10,7 +12,11 @@ use crate::config::Config;
 #[derive(Subcommand, Debug)]
 pub enum AppCommands {
     /// Scan installed applications
-    Scan,
+    Scan {
+        /// Open interactive multi-select after scanning
+        #[arg(long)]
+        interactive: bool,
+    },
 
     /// Add a portable app directory
     AddPath {
@@ -44,57 +50,72 @@ pub enum AppCommands {
     },
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct LastScanSelection {
+    ids: Vec<String>,
+}
+
 pub fn execute(cmd: &AppCommands) -> anyhow::Result<()> {
     match cmd {
-        AppCommands::Scan => cmd_scan(),
+        AppCommands::Scan { interactive } => cmd_scan(*interactive),
         AppCommands::AddPath { dir, name } => cmd_add_path(dir, name.as_deref()),
         AppCommands::Export { output, yes } => cmd_export(output.as_deref(), *yes),
         AppCommands::Import { path, yes } => cmd_import(path, *yes),
     }
 }
 
-/// Scan system and interactively select apps.
-fn cmd_scan() -> anyhow::Result<()> {
+fn cmd_scan(interactive: bool) -> anyhow::Result<()> {
     println!("{} Scanning installed applications...", "🔍".bold());
 
     let config = Config::load()?;
-    let apps = app::scan(&config.app_scan.exclude_patterns)?;
+    let mut apps = app::scan(&config.app_scan.exclude_patterns)?;
 
     if apps.is_empty() {
         println!("  {} No applications found.", "ℹ".yellow());
         return Ok(());
     }
 
-    println!("  Found {} applications", apps.len());
-
-    // Display in a readable format
-    for app in &apps {
-        let source_tag = match app.source {
-            app::AppSource::Winget => "winget".cyan(),
-            app::AppSource::Registry => "reg".dimmed(),
-            app::AppSource::Portable => "portable".yellow(),
-            app::AppSource::Manual => "manual".blue(),
-        };
-        println!(
-            "  {} {:35} v{} [{}]",
-            if app.selected { "☑".green() } else { "☐".dimmed() },
-            app.name,
-            app.version,
-            source_tag
-        );
+    // Apply saved selection if present
+    if let Some(saved) = load_last_selection()? {
+        let selected: HashSet<String> = saved.ids.into_iter().collect();
+        for app in &mut apps {
+            app.selected = selected.contains(&app.id);
+        }
     }
 
-    println!();
-    println!(
-        "  {} Total: {} apps detected. Use `windevkit app export` to create a toolbox.",
-        "📊".bold(),
-        apps.len()
-    );
+    println!("  Found {} applications", apps.len().to_string().green().bold());
+    print_grouped_apps(&apps);
+
+    if interactive {
+        println!();
+        let selected = select_apps_interactive(apps.clone())?;
+        save_last_selection(&selected)?;
+        println!(
+            "  {} Saved selection: {} apps",
+            "💾".bold(),
+            selected.len().to_string().green().bold()
+        );
+        println!(
+            "  Use {} to export using this selection.",
+            "windevkit app export".bold().cyan()
+        );
+    } else {
+        println!();
+        println!(
+            "  {} Tip: run {} to pick apps now, then export later.",
+            "💡".yellow(),
+            "windevkit app scan --interactive".bold().cyan()
+        );
+        println!(
+            "  {} Or run {} for one-step export.",
+            "📦".bold(),
+            "windevkit app export".bold().cyan()
+        );
+    }
 
     Ok(())
 }
 
-/// Add a portable app directory to the config.
 fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
     if !dir.exists() {
         anyhow::bail!("Directory not found: {}", dir.display());
@@ -116,8 +137,6 @@ fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
         silent_args: None,
     };
 
-    // Save to a local portable apps list in config
-    // For now, store in a simple sidecar file
     let config_dir = Config::home_dir();
     let portable_file = config_dir.join("portable-apps.toml");
     let mut existing: Vec<AppEntry> = if portable_file.exists() {
@@ -141,7 +160,6 @@ fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Export toolbox.
 fn cmd_export(output: Option<&Path>, yes: bool) -> anyhow::Result<()> {
     let config = Config::load()?;
     let home = Config::home_dir();
@@ -149,17 +167,22 @@ fn cmd_export(output: Option<&Path>, yes: bool) -> anyhow::Result<()> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| home.join("export"));
 
-    // Scan apps
-    let apps = app::scan(&config.app_scan.exclude_patterns)?;
+    let mut apps = app::scan(&config.app_scan.exclude_patterns)?;
 
     if apps.is_empty() {
         println!("  {} No applications to export.", "ℹ".yellow());
         return Ok(());
     }
 
-    // Interactive selection
+    if let Some(saved) = load_last_selection()? {
+        let selected: HashSet<String> = saved.ids.into_iter().collect();
+        for app in &mut apps {
+            app.selected = selected.contains(&app.id);
+        }
+    }
+
     let selected_apps = if yes {
-        apps
+        apps.into_iter().filter(|a| a.selected).collect()
     } else {
         select_apps_interactive(apps)?
     };
@@ -172,10 +195,9 @@ fn cmd_export(output: Option<&Path>, yes: bool) -> anyhow::Result<()> {
     println!(
         "  {} Exporting {} apps...",
         "📦".bold(),
-        selected_apps.len()
+        selected_apps.len().to_string().green().bold()
     );
 
-    // Ask about including runtimes
     let include_runtimes = if yes {
         true
     } else {
@@ -185,11 +207,9 @@ fn cmd_export(output: Option<&Path>, yes: bool) -> anyhow::Result<()> {
     };
 
     app::export_to(&export_dir, &selected_apps, include_runtimes)?;
-
     Ok(())
 }
 
-/// Import and restore toolbox.
 fn cmd_import(path: &Path, yes: bool) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("Toolbox directory not found: {}", path.display());
@@ -214,11 +234,52 @@ fn cmd_import(path: &Path, yes: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Interactive multi-selection of apps.
+fn print_grouped_apps(apps: &[AppEntry]) {
+    let mut groups: BTreeMap<&'static str, Vec<&AppEntry>> = BTreeMap::new();
+    for app in apps {
+        groups.entry(category_for_app(app)).or_default().push(app);
+    }
+
+    for (category, group) in groups {
+        println!();
+        println!("  {} {} ({})", category_icon(category), category.bold(), group.len());
+        for app in group {
+            let source_tag = match app.source {
+                app::AppSource::Winget => "winget".cyan(),
+                app::AppSource::Registry => "reg".dimmed(),
+                app::AppSource::Portable => "portable".yellow(),
+                app::AppSource::Manual => "manual".blue(),
+            };
+            println!(
+                "    {} {:35} v{} [{}]",
+                if app.selected { "☑".green() } else { "☐".dimmed() },
+                truncate_name(&app.name, 35),
+                app.version,
+                source_tag
+            );
+        }
+    }
+
+    println!();
+    println!(
+        "  {} Total: {} apps detected.",
+        "📊".bold(),
+        apps.len().to_string().green().bold()
+    );
+}
+
 fn select_apps_interactive(apps: Vec<AppEntry>) -> anyhow::Result<Vec<AppEntry>> {
     let options: Vec<String> = apps
         .iter()
-        .map(|a| format!("{} v{} [{}]", a.name, a.version, source_label(&a.source)))
+        .map(|a| {
+            format!(
+                "[{}] {} v{} [{}]",
+                category_for_app(a),
+                a.name,
+                a.version,
+                source_label(&a.source)
+            )
+        })
         .collect();
 
     let defaults: Vec<usize> = apps
@@ -230,17 +291,68 @@ fn select_apps_interactive(apps: Vec<AppEntry>) -> anyhow::Result<Vec<AppEntry>>
 
     let selections = MultiSelect::new("Select apps to export:", options)
         .with_default(&defaults)
-        .with_page_size(15)
+        .with_page_size(20)
         .prompt()?;
 
-    // Map selected labels back to app entries
     Ok(apps
         .into_iter()
         .filter(|a| {
-            let label = format!("{} v{} [{}]", a.name, a.version, source_label(&a.source));
+            let label = format!(
+                "[{}] {} v{} [{}]",
+                category_for_app(a),
+                a.name,
+                a.version,
+                source_label(&a.source)
+            );
             selections.contains(&label)
         })
         .collect())
+}
+
+fn category_for_app(app: &AppEntry) -> &'static str {
+    let name = app.name.to_lowercase();
+    let id = app.id.to_lowercase();
+
+    if contains_any(&name, &["chrome", "firefox", "edge", "browser"]) {
+        "Browser"
+    } else if contains_any(&name, &["intellij", "pycharm", "webstorm", "goland", "rustrover", "android studio", "visual studio code", "zed", "windsurf", "cursor", "idea"]) {
+        "IDE"
+    } else if contains_any(&name, &["jdk", "java", "python", "node", "go programming language", "rustup", "maven", "powershell", "wsl"]) {
+        "Runtime"
+    } else if contains_any(&name, &["git", "docker", "cmake", "navicat", "dbeaver", "apifox", "postman", "zellij", "warp", "termius", "obsidian"]) {
+        "Dev Tool"
+    } else if contains_any(&name, &["qq", "微信", "wechat", "wps", "迅雷", "todesk", "bandizip", "listary", "directory opus", "clash", "vpn", "music", "player", "office"]) {
+        "Utility"
+    } else if contains_any(&id, &["chrome", "firefox", "edge"]) {
+        "Browser"
+    } else {
+        "Other"
+    }
+}
+
+fn category_icon(category: &str) -> &'static str {
+    match category {
+        "Browser" => "🌐",
+        "IDE" => "🧠",
+        "Runtime" => "⚙️",
+        "Dev Tool" => "🛠️",
+        "Utility" => "📦",
+        _ => "📁",
+    }
+}
+
+fn contains_any(value: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| value.contains(&n.to_lowercase()))
+}
+
+fn truncate_name(name: &str, max: usize) -> String {
+    let count = name.chars().count();
+    if count <= max {
+        return name.to_string();
+    }
+    let mut s: String = name.chars().take(max.saturating_sub(1)).collect();
+    s.push('…');
+    s
 }
 
 fn source_label(source: &app::AppSource) -> &'static str {
@@ -250,4 +362,30 @@ fn source_label(source: &app::AppSource) -> &'static str {
         app::AppSource::Portable => "portable",
         app::AppSource::Manual => "manual",
     }
+}
+
+fn last_selection_path() -> PathBuf {
+    Config::home_dir().join("last-scan-selection.json")
+}
+
+fn save_last_selection(apps: &[AppEntry]) -> anyhow::Result<()> {
+    let data = LastScanSelection {
+        ids: apps.iter().map(|a| a.id.clone()).collect(),
+    };
+    let path = last_selection_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&data)?)?;
+    Ok(())
+}
+
+fn load_last_selection() -> anyhow::Result<Option<LastScanSelection>> {
+    let path = last_selection_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(path)?;
+    let data = serde_json::from_str::<LastScanSelection>(&content)?;
+    Ok(Some(data))
 }

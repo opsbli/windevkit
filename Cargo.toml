@@ -55,6 +55,7 @@ dirs = "6"
 
 # Serialization
 serde_json = "1"
+base64 = "0.22"
 
 # Shell command execution
 # (built-in std::process::Command, no extra crate needed)
