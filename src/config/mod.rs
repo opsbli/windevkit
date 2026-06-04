@@ -48,9 +48,19 @@ pub struct AppScanConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppExportConfig {
     pub auto_download_installers: bool,
     pub download_concurrency: usize,
+}
+
+impl Default for AppExportConfig {
+    fn default() -> Self {
+        Self {
+            auto_download_installers: true,
+            download_concurrency: 3,
+        }
+    }
 }
 
 impl Default for Config {
@@ -78,10 +88,7 @@ impl Default for Config {
                 include_scoop: false,
                 include_choco: false,
             },
-            app_export: AppExportConfig {
-                auto_download_installers: true,
-                download_concurrency: 3,
-            },
+            app_export: AppExportConfig::default(),
         }
     }
 }
