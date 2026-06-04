@@ -117,6 +117,10 @@ pub fn export_to(
     let report_path = output_dir.join("apps.md");
     std::fs::write(&report_path, generate_apps_report(&exported_apps, &exported_runtimes))?;
 
+    // Create zip archive next to the output directory
+    let zip_path = output_dir.with_extension("zip");
+    create_zip_archive(output_dir, &zip_path)?;
+
     println!();
     println!(
         "{} Toolbox exported to {}",
@@ -125,6 +129,7 @@ pub fn export_to(
     );
     println!("   Size: {}", format_size(dir_size(output_dir)?));
     println!("   Report: {}", report_path.display());
+    println!("   Zip: {}", zip_path.display());
 
     Ok(())
 }
@@ -185,6 +190,42 @@ fn format_size(bytes: u64) -> String {
         unit_idx += 1;
     }
     format!("{:.1} {}", size, UNITS[unit_idx])
+}
+
+fn create_zip_archive(src_dir: &Path, zip_path: &Path) -> anyhow::Result<()> {
+    let file = std::fs::File::create(zip_path)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    add_dir_to_zip(&mut zip, src_dir, src_dir, options)?;
+    zip.finish()?;
+    Ok(())
+}
+
+fn add_dir_to_zip(
+    zip: &mut zip::ZipWriter<std::fs::File>,
+    base: &Path,
+    dir: &Path,
+    options: zip::write::SimpleFileOptions,
+) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = path.strip_prefix(base)?.to_string_lossy().replace('\\', "/");
+
+        if path.is_dir() {
+            if !name.is_empty() {
+                zip.add_directory(format!("{}/", name), options)?;
+            }
+            add_dir_to_zip(zip, base, &path, options)?;
+        } else {
+            zip.start_file(name, options)?;
+            let mut f = std::fs::File::open(&path)?;
+            std::io::copy(&mut f, zip)?;
+        }
+    }
+    Ok(())
 }
 
 fn generate_apps_report(apps: &[AppEntry], runtimes: &[AppRuntimeEntry]) -> String {

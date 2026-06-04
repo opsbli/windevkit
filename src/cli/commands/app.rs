@@ -42,6 +42,14 @@ pub enum AppCommands {
         #[arg(long)]
         output: Option<PathBuf>,
 
+        /// Filter apps by keyword before export
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Filter apps by category before export
+        #[arg(long)]
+        category: Option<String>,
+
         /// Non-interactive mode (export without prompts)
         #[arg(long)]
         yes: bool,
@@ -67,7 +75,7 @@ pub fn execute(cmd: &AppCommands) -> anyhow::Result<()> {
     match cmd {
         AppCommands::Scan { interactive, filter, category } => cmd_scan(*interactive, filter.as_deref(), category.as_deref()),
         AppCommands::AddPath { dir, name } => cmd_add_path(dir, name.as_deref()),
-        AppCommands::Export { output, yes } => cmd_export(output.as_deref(), *yes),
+        AppCommands::Export { output, filter, category, yes } => cmd_export(output.as_deref(), filter.as_deref(), category.as_deref(), *yes),
         AppCommands::Import { path, yes } => cmd_import(path, *yes),
     }
 }
@@ -182,7 +190,7 @@ fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_export(output: Option<&Path>, yes: bool) -> anyhow::Result<()> {
+fn cmd_export(output: Option<&Path>, filter: Option<&str>, category: Option<&str>, yes: bool) -> anyhow::Result<()> {
     let config = Config::load()?;
     let home = Config::home_dir();
     let export_dir = output
@@ -190,6 +198,14 @@ fn cmd_export(output: Option<&Path>, yes: bool) -> anyhow::Result<()> {
         .unwrap_or_else(|| home.join("export"));
 
     let mut apps = app::scan(&config.app_scan.exclude_patterns)?;
+
+    if let Some(f) = filter {
+        let f = f.to_lowercase();
+        apps.retain(|a| a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f));
+    }
+    if let Some(c) = category {
+        apps.retain(|a| category_for_app(a).eq_ignore_ascii_case(c));
+    }
 
     if apps.is_empty() {
         println!("  {} No applications to export.", "ℹ".yellow());
