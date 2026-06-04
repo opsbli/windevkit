@@ -1,18 +1,43 @@
 //! Exporter — generates the offline toolbox directory.
 
-use std::path::Path;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Mutex};
 
 use colored::Colorize;
 
-use crate::app::{self, AppEntry, AppRuntimeEntry};
 use crate::app::manifest::Manifest;
+use crate::app::{self, AppEntry, AppRuntimeEntry};
 use crate::config::Config;
 use crate::runtime::{self, RuntimeKind};
 
+const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 3;
+
+#[derive(Debug, Clone)]
+struct DownloadTask {
+    key: String,
+    label: String,
+    url: String,
+    target_dir: PathBuf,
+    filename: String,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadOutcome {
+    key: String,
+    label: String,
+    result: Result<PathBuf, String>,
+}
+
+#[derive(Debug, Clone)]
+struct ExportSummary {
+    downloaded: usize,
+    copied: usize,
+    deferred: usize,
+    failed: usize,
+}
+
 /// Export the toolbox to a directory.
-///
-/// Scans apps, collects selected ones, downloads installers, and
-/// saves the manifest along with runtime archives.
 pub fn export_to(
     output_dir: &Path,
     selected_apps: &[AppEntry],
@@ -22,26 +47,178 @@ pub fn export_to(
     let portables_dir = output_dir.join("portables");
     let runtimes_dir = output_dir.join("runtimes");
 
-    // Create output directory structure
     std::fs::create_dir_all(&installers_dir)?;
     std::fs::create_dir_all(&portables_dir)?;
     std::fs::create_dir_all(&runtimes_dir)?;
 
     println!("{} Exporting toolbox to {}", "📦".bold(), output_dir.display());
+    println!(
+        "{} Download concurrency: {}",
+        "⚡".bold(),
+        DEFAULT_DOWNLOAD_CONCURRENCY.to_string().cyan().bold()
+    );
 
-    // Export app installers
-    let mut exported_apps = Vec::new();
+    let config = Config::load()?;
+
+    let app_download_plan = build_app_download_plan(selected_apps, &installers_dir);
+    let runtime_download_plan = if include_runtimes {
+        build_runtime_download_plan(&config, &runtimes_dir)?
+    } else {
+        RuntimeDownloadPlan {
+            tasks: Vec::new(),
+            entries: Vec::new(),
+        }
+    };
+
+    let mut all_tasks = Vec::new();
+    all_tasks.extend(app_download_plan.tasks.clone());
+    all_tasks.extend(runtime_download_plan.tasks.clone());
+
+    let download_results = run_downloads(all_tasks, DEFAULT_DOWNLOAD_CONCURRENCY)?;
+    let mut result_map = HashMap::new();
+    for outcome in download_results {
+        result_map.insert(outcome.key.clone(), outcome);
+    }
+
+    let mut summary = ExportSummary {
+        downloaded: 0,
+        copied: 0,
+        deferred: 0,
+        failed: 0,
+    };
+
+    let exported_apps = export_apps(
+        selected_apps,
+        &portables_dir,
+        &app_download_plan.tasks,
+        &result_map,
+        &mut summary,
+    )?;
+
+    let exported_runtimes = export_runtimes(
+        runtime_download_plan.entries,
+        &result_map,
+        &mut summary,
+    );
+
+    let manifest = Manifest::new(exported_apps.clone(), exported_runtimes.clone());
+    let manifest_path = output_dir.join("manifest.toml");
+    manifest.save(&manifest_path)?;
+
+    let report_path = output_dir.join("apps.md");
+    std::fs::write(&report_path, generate_apps_report(&exported_apps, &exported_runtimes))?;
+
+    let zip_path = output_dir.with_extension("zip");
+    create_zip_archive(output_dir, &zip_path)?;
+
+    println!();
+    println!("{} Toolbox exported to {}", "✅".green().bold(), output_dir.display());
+    println!("   Size: {}", format_size(dir_size(output_dir)?));
+    println!("   Report: {}", report_path.display());
+    println!("   Zip: {}", zip_path.display());
+    println!(
+        "   Downloads: {}  Copied: {}  Deferred: {}  Failed: {}",
+        summary.downloaded.to_string().green().bold(),
+        summary.copied.to_string().cyan().bold(),
+        summary.deferred.to_string().yellow().bold(),
+        summary.failed.to_string().red().bold()
+    );
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct AppDownloadPlan {
+    tasks: Vec<DownloadTask>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeDownloadPlan {
+    tasks: Vec<DownloadTask>,
+    entries: Vec<AppRuntimeEntry>,
+}
+
+fn build_app_download_plan(selected_apps: &[AppEntry], installers_dir: &Path) -> AppDownloadPlan {
+    let mut tasks = Vec::new();
+
     for app in selected_apps {
         if let Some(rule) = app::rules::resolve_rule(app) {
             if let Some(url) = rule.download_url.clone() {
-                let filename = filename_from_rule_or_url(app, &rule, &url);
-                match crate::runtime::download::download(&url, &installers_dir, &filename, None) {
+                tasks.push(DownloadTask {
+                    key: app_download_key(app),
+                    label: format!("app:{}", app.name),
+                    filename: filename_from_rule_or_url(app, &rule, &url),
+                    url,
+                    target_dir: installers_dir.to_path_buf(),
+                });
+            }
+        }
+    }
+
+    AppDownloadPlan { tasks }
+}
+
+fn build_runtime_download_plan(
+    config: &Config,
+    runtimes_dir: &Path,
+) -> anyhow::Result<RuntimeDownloadPlan> {
+    let mut tasks = Vec::new();
+    let mut entries = Vec::new();
+
+    for kind in &[RuntimeKind::Node, RuntimeKind::Java, RuntimeKind::Maven] {
+        let versions = runtime::list_installed(*kind)?;
+        for v in versions {
+            let filename = runtime::url::archive_filename(*kind, &v.version);
+            let url = runtime::url::build_download_url(*kind, &v.version, &config.core.mirror);
+            let dest = runtimes_dir.join(&filename);
+            let key = runtime_download_key(*kind, &v.version);
+
+            entries.push(AppRuntimeEntry {
+                tool: kind.to_string(),
+                version: v.version.clone(),
+                archive_path: Some(dest.to_string_lossy().to_string()),
+            });
+
+            if dest.exists() {
+                println!("  {} runtime {} {} already cached", "↺".cyan(), kind, v.version);
+                continue;
+            }
+
+            tasks.push(DownloadTask {
+                key,
+                label: format!("runtime:{} {}", kind, v.version),
+                url,
+                target_dir: runtimes_dir.to_path_buf(),
+                filename,
+            });
+        }
+    }
+
+    Ok(RuntimeDownloadPlan { tasks, entries })
+}
+
+fn export_apps(
+    selected_apps: &[AppEntry],
+    portables_dir: &Path,
+    app_tasks: &[DownloadTask],
+    result_map: &HashMap<String, DownloadOutcome>,
+    summary: &mut ExportSummary,
+) -> anyhow::Result<Vec<AppEntry>> {
+    let app_task_keys: HashMap<String, &DownloadTask> = app_tasks.iter().map(|t| (t.key.clone(), t)).collect();
+    let mut exported_apps = Vec::new();
+
+    for app in selected_apps {
+        let app_key = app_download_key(app);
+        if app_task_keys.contains_key(&app_key) {
+            if let Some(outcome) = result_map.get(&app_key) {
+                match &outcome.result {
                     Ok(path) => {
                         println!("  {} {} — {} saved", "✓".green(), app.name, path.display());
                         let mut exported = app.clone();
                         exported.install_path = Some(path.to_string_lossy().to_string());
                         exported.silent_args = app::silent_args_for_app(app);
                         exported_apps.push(exported);
+                        summary.downloaded += 1;
                         continue;
                     }
                     Err(e) => {
@@ -53,25 +230,17 @@ pub fn export_to(
 
         match app.source {
             crate::app::AppSource::Winget => {
-                let installer_path = download_winget_installer(app, &installers_dir);
-                match installer_path {
-                    Ok(path) => {
-                        println!("  {} {} — {} saved", "✓".green(), app.name, path.display());
-                        let mut exported = app.clone();
-                        exported.install_path = Some(path.to_string_lossy().to_string());
-                        exported.silent_args = app::silent_args_for_app(app);
-                        exported_apps.push(exported);
-                    }
-                    Err(e) => {
-                        println!("  {} {} — {} (will install via winget)", "ℹ".yellow(), app.name, e);
-                        let mut exported = app.clone();
-                        exported.silent_args = app::silent_args_for_app(app);
-                        exported_apps.push(exported);
-                    }
-                }
+                let mut exported = app.clone();
+                exported.silent_args = app::silent_args_for_app(app);
+                println!(
+                    "  {} {} — winget download not yet supported; will install via winget",
+                    "ℹ".yellow(),
+                    app.name
+                );
+                exported_apps.push(exported);
+                summary.deferred += 1;
             }
             crate::app::AppSource::Portable | crate::app::AppSource::Manual => {
-                // Copy portable app directory
                 if let Some(ref src_path) = app.install_path {
                     let src = Path::new(src_path);
                     if src.exists() {
@@ -81,90 +250,113 @@ pub fn export_to(
                         let mut exported = app.clone();
                         exported.install_path = Some(dest.to_string_lossy().to_string());
                         exported_apps.push(exported);
+                        summary.copied += 1;
                     } else {
                         println!("  {} {} — source not found", "✗".red(), app.name);
                         exported_apps.push(app.clone());
+                        summary.failed += 1;
                     }
                 } else {
                     exported_apps.push(app.clone());
+                    summary.deferred += 1;
                 }
             }
             _ => {
                 let mut exported = app.clone();
                 exported.silent_args = app::silent_args_for_app(app);
                 exported_apps.push(exported);
+                summary.deferred += 1;
             }
         }
     }
 
-    // Export runtime archives
-    let mut exported_runtimes = Vec::new();
-    if include_runtimes {
-        let config = Config::load()?;
-        for kind in &[RuntimeKind::Node, RuntimeKind::Java, RuntimeKind::Maven] {
-            let versions = runtime::list_installed(*kind)?;
-            for v in &versions {
-                let filename = runtime::url::archive_filename(*kind, &v.version);
-                let url = runtime::url::build_download_url(*kind, &v.version, &config.core.mirror);
-                let dest = runtimes_dir.join(&filename);
+    Ok(exported_apps)
+}
 
-                if !dest.exists() {
-                    println!("  {} Downloading {} v{}...", "📥".bold(), kind, v.version);
-                    match runtime::download::download(&url, &runtimes_dir, &filename, None) {
-                        Ok(path) => {
-                            println!("  {} {} saved", "✓".green(), path.display());
-                        }
-                        Err(e) => {
-                            println!("  {} Failed to download {}: {}", "✗".red(), kind, e);
-                        }
-                    }
+fn export_runtimes(
+    entries: Vec<AppRuntimeEntry>,
+    result_map: &HashMap<String, DownloadOutcome>,
+    summary: &mut ExportSummary,
+) -> Vec<AppRuntimeEntry> {
+    for rt in &entries {
+        let key = runtime_download_key_str(&rt.tool, &rt.version);
+        if let Some(outcome) = result_map.get(&key) {
+            match &outcome.result {
+                Ok(path) => {
+                    println!("  {} runtime {} {} — {} saved", "✓".green(), rt.tool, rt.version, path.display());
+                    summary.downloaded += 1;
                 }
+                Err(e) => {
+                    println!("  {} runtime {} {} — {}", "✗".red(), rt.tool, rt.version, e);
+                    summary.failed += 1;
+                }
+            }
+        }
+    }
+    entries
+}
 
-                exported_runtimes.push(AppRuntimeEntry {
-                    tool: kind.to_string(),
-                    version: v.version.clone(),
-                    archive_path: Some(dest.to_string_lossy().to_string()),
+fn run_downloads(tasks: Vec<DownloadTask>, concurrency: usize) -> anyhow::Result<Vec<DownloadOutcome>> {
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    println!("{} Queued {} downloads", "📥".bold(), tasks.len().to_string().green().bold());
+
+    let queue = Arc::new(Mutex::new(VecDeque::from(tasks)));
+    let (tx, rx) = mpsc::channel();
+    let workers = concurrency.max(1);
+
+    for _ in 0..workers {
+        let queue = Arc::clone(&queue);
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            loop {
+                let task = {
+                    let mut guard = queue.lock().expect("download queue poisoned");
+                    guard.pop_front()
+                };
+
+                let Some(task) = task else { break; };
+                println!("  {} {}", "↓".cyan(), task.label);
+                let result = crate::runtime::download::download(
+                    &task.url,
+                    &task.target_dir,
+                    &task.filename,
+                    None,
+                )
+                .map_err(|e| e.to_string());
+
+                let _ = tx.send(DownloadOutcome {
+                    key: task.key,
+                    label: task.label,
+                    result,
                 });
             }
-        }
+        });
     }
+    drop(tx);
 
-    // Write manifest
-    let manifest = Manifest::new(exported_apps.clone(), exported_runtimes.clone());
-    let manifest_path = output_dir.join("manifest.toml");
-    manifest.save(&manifest_path)?;
-
-    // Write human-readable report
-    let report_path = output_dir.join("apps.md");
-    std::fs::write(&report_path, generate_apps_report(&exported_apps, &exported_runtimes))?;
-
-    // Create zip archive next to the output directory
-    let zip_path = output_dir.with_extension("zip");
-    create_zip_archive(output_dir, &zip_path)?;
-
-    println!();
-    println!(
-        "{} Toolbox exported to {}",
-        "✅".green().bold(),
-        output_dir.display()
-    );
-    println!("   Size: {}", format_size(dir_size(output_dir)?));
-    println!("   Report: {}", report_path.display());
-    println!("   Zip: {}", zip_path.display());
-
-    Ok(())
+    let mut outcomes = Vec::new();
+    for outcome in rx {
+        outcomes.push(outcome);
+    }
+    outcomes.sort_by(|a, b| a.label.cmp(&b.label));
+    Ok(outcomes)
 }
 
-/// Attempt to download a winget package's installer.
-/// This uses winget's download feature when available, or falls back.
-fn download_winget_installer(_app: &AppEntry, _target_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
-    // winget doesn't have a built-in download command in older versions.
-    // For now, we'll attempt to use the internal download logic or mark for winget install.
-    // Future: use `winget download` on newer Windows builds.
-    anyhow::bail!("winget download not yet supported; will install via winget on target machine");
+fn app_download_key(app: &AppEntry) -> String {
+    format!("app:{}", app.id)
 }
 
-/// Recursively copy a directory.
+fn runtime_download_key(kind: RuntimeKind, version: &str) -> String {
+    runtime_download_key_str(&kind.to_string(), version)
+}
+
+fn runtime_download_key_str(tool: &str, version: &str) -> String {
+    format!("runtime:{}:{}", tool, version)
+}
+
 fn filename_from_rule_or_url(app: &AppEntry, rule: &crate::app::rules::AppRule, url: &str) -> String {
     if let Some(installer_type) = &rule.installer_type {
         let ext = installer_type.trim().trim_start_matches('.');
@@ -198,7 +390,6 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Calculate directory size recursively.
 fn dir_size(path: &Path) -> std::io::Result<u64> {
     let mut total = 0u64;
     if path.is_dir() {
@@ -215,7 +406,6 @@ fn dir_size(path: &Path) -> std::io::Result<u64> {
     Ok(total)
 }
 
-/// Format bytes as human-readable size.
 fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
     let mut size = bytes as f64;
@@ -281,7 +471,14 @@ fn generate_apps_report(apps: &[AppEntry], runtimes: &[AppRuntimeEntry]) -> Stri
         };
         let category = app::category_for_app(app);
         let path = app.install_path.as_deref().unwrap_or("");
-        out.push_str(&format!("| {} | {} | {} | {} | {} |\n", app.name.replace('|', "\\|"), app.version.replace('|', "\\|"), source, category.replace('|', "\\|"), path.replace('|', "\\|")));
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            app.name.replace('|', "\\|"),
+            app.version.replace('|', "\\|"),
+            source,
+            category.replace('|', "\\|"),
+            path.replace('|', "\\|")
+        ));
     }
 
     out.push_str("\n## Runtimes\n\n");
@@ -289,7 +486,12 @@ fn generate_apps_report(apps: &[AppEntry], runtimes: &[AppRuntimeEntry]) -> Stri
     out.push_str("|---|---:|---|\n");
     for rt in runtimes {
         let path = rt.archive_path.as_deref().unwrap_or("");
-        out.push_str(&format!("| {} | {} | {} |\n", rt.tool.replace('|', "\\|"), rt.version.replace('|', "\\|"), path.replace('|', "\\|")));
+        out.push_str(&format!(
+            "| {} | {} | {} |\n",
+            rt.tool.replace('|', "\\|"),
+            rt.version.replace('|', "\\|"),
+            path.replace('|', "\\|")
+        ));
     }
     out
 }
