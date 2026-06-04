@@ -31,6 +31,10 @@ pub struct AppEntry {
     pub install_path: Option<String>,
     /// Silent install arguments (for known apps)
     pub silent_args: Option<String>,
+    /// Installer type hint: exe/msi/zip/portable
+    pub installer_type: Option<String>,
+    /// Force portable handling when true
+    pub portable: Option<bool>,
 }
 
 /// A runtime entry for offline reinstall.
@@ -68,4 +72,12 @@ pub fn category_for_app(app: &AppEntry) -> String {
 
 pub fn silent_args_for_app(app: &AppEntry) -> Option<String> {
     rules::effective_silent_args(app)
+}
+
+pub fn installer_type_for_app(app: &AppEntry) -> Option<String> {
+    rules::effective_installer_type(app)
+}
+
+pub fn portable_for_app(app: &AppEntry) -> bool {
+    rules::effective_portable(app)
 }

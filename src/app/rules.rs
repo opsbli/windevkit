@@ -81,6 +81,22 @@ pub fn effective_silent_args(app: &AppEntry) -> Option<String> {
     resolve_rule(app).and_then(|r| r.silent_args)
 }
 
+pub fn effective_installer_type(app: &AppEntry) -> Option<String> {
+    if let Some(installer_type) = &app.installer_type {
+        if !installer_type.trim().is_empty() {
+            return Some(installer_type.clone());
+        }
+    }
+    resolve_rule(app).and_then(|r| r.installer_type)
+}
+
+pub fn effective_portable(app: &AppEntry) -> bool {
+    if let Some(portable) = app.portable {
+        return portable;
+    }
+    resolve_rule(app).and_then(|r| r.portable).unwrap_or(false)
+}
+
 fn load_user_rules() -> anyhow::Result<RulesFile> {
     ensure_user_rules_file()?;
     let content = std::fs::read_to_string(user_rules_path())?;
@@ -269,6 +285,7 @@ fn heuristic_category(app: &AppEntry) -> &'static str {
 fn default_rules_template() -> String {
     r#"# windevkit user rules
 # User rules override built-in rules by precedence.
+# installer_type: exe | msi | zip | portable
 
 [[rules]]
 match = "Google Chrome"
@@ -285,6 +302,13 @@ silent_args = "/verysilent /suppressmsgboxes"
 installer_type = "exe"
 category = "IDE"
 portable = false
+
+[[rules]]
+match = "Some Portable Tool"
+download_url = "https://example.com/tool.zip"
+installer_type = "zip"
+category = "Utility"
+portable = true
 "#.to_string()
 }
 

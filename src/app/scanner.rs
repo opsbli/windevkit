@@ -101,6 +101,8 @@ fn scan_winget() -> anyhow::Result<Vec<AppEntry>> {
                 selected: true,
                 install_path: None,
                 silent_args: guess_silent_args(&i),
+                installer_type: None,
+                portable: None,
             });
         }
     }
@@ -282,6 +284,8 @@ if ($null -eq $json) { $json = '[]' }
                     .map(|p| p.trim().to_string())
                     .filter(|p| !p.is_empty()),
                 silent_args: None,
+                installer_type: None,
+                portable: None,
             })
         })
         .collect();
@@ -449,6 +453,8 @@ mod tests {
                 selected: true,
                 install_path: None,
                 silent_args: None,
+                installer_type: None,
+                portable: None,
             },
             AppEntry {
                 id: "{GUID}".into(),
@@ -458,6 +464,8 @@ mod tests {
                 selected: true,
                 install_path: None,
                 silent_args: None,
+                installer_type: None,
+                portable: None,
             },
         ];
         let deduped = deduplicate(apps);

@@ -218,6 +218,8 @@ fn export_apps(
                         let mut exported = app.clone();
                         exported.install_path = Some(path.to_string_lossy().to_string());
                         exported.silent_args = app::silent_args_for_app(app);
+                        exported.installer_type = app::installer_type_for_app(app);
+                        exported.portable = Some(app::portable_for_app(app));
                         exported_apps.push(exported);
                         summary.downloaded += 1;
                         continue;
@@ -233,6 +235,8 @@ fn export_apps(
             crate::app::AppSource::Winget => {
                 let mut exported = app.clone();
                 exported.silent_args = app::silent_args_for_app(app);
+                exported.installer_type = app::installer_type_for_app(app);
+                exported.portable = Some(app::portable_for_app(app));
                 println!(
                     "  {} {} — winget download not yet supported; will install via winget",
                     "ℹ".yellow(),
@@ -250,6 +254,8 @@ fn export_apps(
                         println!("  {} {} — portable copied", "✓".green(), app.name);
                         let mut exported = app.clone();
                         exported.install_path = Some(dest.to_string_lossy().to_string());
+                        exported.installer_type = Some("portable".into());
+                        exported.portable = Some(true);
                         exported_apps.push(exported);
                         summary.copied += 1;
                     } else {
@@ -265,6 +271,8 @@ fn export_apps(
             _ => {
                 let mut exported = app.clone();
                 exported.silent_args = app::silent_args_for_app(app);
+                exported.installer_type = app::installer_type_for_app(app);
+                exported.portable = Some(app::portable_for_app(app));
                 exported_apps.push(exported);
                 summary.deferred += 1;
             }

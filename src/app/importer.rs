@@ -6,7 +6,7 @@ use colored::Colorize;
 use inquire::Select;
 
 use crate::app::manifest::Manifest;
-use crate::app::{AppEntry, AppSource, AppRuntimeEntry};
+use crate::app::{self, AppEntry, AppRuntimeEntry};
 
 #[derive(Debug, Clone)]
 struct ImportSummary {
@@ -37,9 +37,6 @@ enum FailureAction {
     Abort,
 }
 
-/// Import and restore from a toolbox directory.
-///
-/// If `interactive` is true, prompts the user before each action and on failure.
 pub fn import_from(toolbox_dir: &Path, interactive: bool) -> anyhow::Result<()> {
     let manifest_path = toolbox_dir.join("manifest.toml");
     if !manifest_path.exists() {
@@ -59,8 +56,7 @@ pub fn import_from(toolbox_dir: &Path, interactive: bool) -> anyhow::Result<()> 
     };
 
     for rt in &manifest.runtimes {
-        let result = import_runtime(rt, interactive)?;
-        summary.runtime_results.push(result);
+        summary.runtime_results.push(import_runtime(rt, interactive)?);
     }
 
     for app in &manifest.apps {
@@ -74,20 +70,17 @@ pub fn import_from(toolbox_dir: &Path, interactive: bool) -> anyhow::Result<()> 
             });
             continue;
         }
-
-        let result = import_app(app, interactive)?;
-        summary.app_results.push(result);
+        summary.app_results.push(import_app(app, interactive)?);
     }
 
     print_summary(&summary);
 
-    let failed = summary
+    if summary
         .runtime_results
         .iter()
         .chain(summary.app_results.iter())
-        .any(|r| r.status == ItemStatus::Failed);
-
-    if failed {
+        .any(|r| r.status == ItemStatus::Failed)
+    {
         anyhow::bail!("Import finished with failures");
     }
 
@@ -135,7 +128,7 @@ fn import_runtime(rt: &AppRuntimeEntry, interactive: bool) -> anyhow::Result<Ite
         }
     }
 
-    run_with_failure_policy(interactive, || {
+    let result = run_with_failure_policy(interactive, || {
         println!(
             "  {} Installing {} {} from local archive...",
             "🔧".bold(),
@@ -146,58 +139,62 @@ fn import_runtime(rt: &AppRuntimeEntry, interactive: bool) -> anyhow::Result<Ite
         let config = crate::config::Config::load()?;
         crate::runtime::install(kind, &rt.version, Some(archive), &config)?;
         Ok(())
-    })
-    .map(|status| ItemResult {
-        kind: "runtime",
-        name: rt.tool.clone(),
-        version: rt.version.clone(),
-        status,
-        detail: status_detail("installed from local archive", "user skipped after failure", archive),
-    })
-    .or_else(|e| {
-        Ok(ItemResult {
+    });
+
+    Ok(match result {
+        Ok(ItemStatus::Success) => ItemResult {
+            kind: "runtime",
+            name: rt.tool.clone(),
+            version: rt.version.clone(),
+            status: ItemStatus::Success,
+            detail: format!("installed from {}", archive.display()),
+        },
+        Ok(ItemStatus::Skipped) => ItemResult {
+            kind: "runtime",
+            name: rt.tool.clone(),
+            version: rt.version.clone(),
+            status: ItemStatus::Skipped,
+            detail: "user skipped after failure".into(),
+        },
+        Ok(ItemStatus::Failed) => ItemResult {
+            kind: "runtime",
+            name: rt.tool.clone(),
+            version: rt.version.clone(),
+            status: ItemStatus::Failed,
+            detail: "runtime install failed".into(),
+        },
+        Err(e) => ItemResult {
             kind: "runtime",
             name: rt.tool.clone(),
             version: rt.version.clone(),
             status: ItemStatus::Failed,
             detail: e.to_string(),
-        })
+        },
     })
 }
 
 fn import_app(app: &AppEntry, interactive: bool) -> anyhow::Result<ItemResult> {
-    match app.source {
-        AppSource::Winget => import_winget_app(app, interactive),
-        AppSource::Portable | AppSource::Manual => import_portable_or_manual_app(app, interactive),
-        AppSource::Registry => import_registry_app(app, interactive),
-    }
-}
-
-fn import_winget_app(app: &AppEntry, interactive: bool) -> anyhow::Result<ItemResult> {
     if let Some(path) = &app.install_path {
-        let installer = Path::new(path);
-        if installer.exists() {
+        let local = Path::new(path);
+        if local.exists() {
             if interactive {
                 println!(
-                    "  {} Install {} {} from local installer {}? [Y/n] ",
+                    "  {} Install {} {} from local artifact {}? [Y/n] ",
                     "❓".bold(),
                     app.name,
                     app.version,
-                    installer.display()
+                    local.display()
                 );
                 if !read_yes_no(true) {
                     return Ok(skipped_app(app, "skipped by user"));
                 }
             }
 
-            let status = run_with_failure_policy(interactive, || {
-                install_silent(installer, app.silent_args.as_deref())
-            });
-
-            return Ok(match status {
-                Ok(ItemStatus::Success) => success_app(app, format!("installed from {}", installer.display())),
+            let local_result = run_with_failure_policy(interactive, || install_local_artifact(app, local));
+            return Ok(match local_result {
+                Ok(ItemStatus::Success) => success_app(app, format!("installed from {}", local.display())),
                 Ok(ItemStatus::Skipped) => skipped_app(app, "user skipped after failure"),
-                Ok(ItemStatus::Failed) => failed_app(app, "installer failed"),
+                Ok(ItemStatus::Failed) => failed_app(app, "local artifact install failed"),
                 Err(err) => {
                     println!("  {} {} local install failed, trying winget fallback...", "ℹ".yellow(), app.name);
                     import_winget_fallback(app, interactive, Some(err.to_string()))?
@@ -209,46 +206,22 @@ fn import_winget_app(app: &AppEntry, interactive: bool) -> anyhow::Result<ItemRe
     import_winget_fallback(app, interactive, None)
 }
 
-fn import_registry_app(app: &AppEntry, interactive: bool) -> anyhow::Result<ItemResult> {
-    import_winget_fallback(app, interactive, None)
-}
+fn install_local_artifact(app: &AppEntry, path: &Path) -> anyhow::Result<()> {
+    let installer_type = app::installer_type_for_app(app)
+        .or_else(|| infer_installer_type(path))
+        .unwrap_or_else(|| "exe".into())
+        .to_lowercase();
 
-fn import_portable_or_manual_app(app: &AppEntry, interactive: bool) -> anyhow::Result<ItemResult> {
-    let Some(path) = &app.install_path else {
-        return Ok(failed_app(app, "missing install_path"));
-    };
-
-    let src = Path::new(path);
-    if !src.exists() {
-        return Ok(failed_app(app, format!("source path not found: {}", src.display())));
-    }
-
-    let target_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("tools")
-        .join(&app.id);
-
-    if interactive {
-        println!(
-            "  {} Extract {} to {}? [Y/n] ",
-            "❓".bold(),
-            app.name,
-            target_dir.display()
-        );
-        if !read_yes_no(true) {
-            return Ok(skipped_app(app, "skipped by user"));
+    if app::portable_for_app(app) || installer_type == "portable" {
+        install_portable_dir(app, path)
+    } else {
+        match installer_type.as_str() {
+            "exe" => install_exe(path, app.silent_args.as_deref()),
+            "msi" => install_msi(path, app.silent_args.as_deref()),
+            "zip" => extract_zip_to_tools(app, path),
+            "portable" => install_portable_dir(app, path),
+            other => anyhow::bail!("Unsupported installer_type: {}", other),
         }
-    }
-
-    match run_with_failure_policy(interactive, || {
-        std::fs::create_dir_all(&target_dir)?;
-        copy_dir_recursive(src, &target_dir)?;
-        Ok(())
-    }) {
-        Ok(ItemStatus::Success) => Ok(success_app(app, format!("copied to {}", target_dir.display()))),
-        Ok(ItemStatus::Skipped) => Ok(skipped_app(app, "user skipped after failure")),
-        Ok(ItemStatus::Failed) => Ok(failed_app(app, "copy failed")),
-        Err(err) => Ok(failed_app(app, err.to_string())),
     }
 }
 
@@ -298,37 +271,82 @@ where
     }
 }
 
-fn install_silent(installer: &Path, silent_args: Option<&str>) -> anyhow::Result<()> {
-    let ext = installer
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-
+fn install_exe(installer: &Path, silent_args: Option<&str>) -> anyhow::Result<()> {
     let args = silent_args.unwrap_or("/S");
+    let status = std::process::Command::new(installer)
+        .args(args.split_whitespace())
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("Installer exited with code {:?}", status.code());
+    }
+    Ok(())
+}
 
-    match ext.to_lowercase().as_str() {
-        "exe" => {
-            let status = std::process::Command::new(installer)
-                .args(args.split_whitespace())
-                .status()?;
-            if !status.success() {
-                anyhow::bail!("Installer exited with code {:?}", status.code());
+fn install_msi(installer: &Path, silent_args: Option<&str>) -> anyhow::Result<()> {
+    let mut args = vec!["/i".to_string(), installer.to_string_lossy().to_string()];
+    if let Some(extra) = silent_args {
+        args.extend(extra.split_whitespace().map(|s| s.to_string()));
+    } else {
+        args.extend(["/quiet".into(), "/norestart".into()]);
+    }
+    let status = std::process::Command::new("msiexec").args(&args).status()?;
+    if !status.success() {
+        anyhow::bail!("MSI installer exited with code {:?}", status.code());
+    }
+    Ok(())
+}
+
+fn extract_zip_to_tools(app: &AppEntry, archive: &Path) -> anyhow::Result<()> {
+    let target_dir = tool_target_dir(app);
+    std::fs::create_dir_all(&target_dir)?;
+    let file = std::fs::File::open(archive)?;
+    let mut zip = zip::ZipArchive::new(file)?;
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i)?;
+        let outpath = match entry.enclosed_name() {
+            Some(path) => target_dir.join(path),
+            None => continue,
+        };
+        if entry.name().ends_with('/') {
+            std::fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(parent) = outpath.parent() {
+                std::fs::create_dir_all(parent)?;
             }
-        }
-        "msi" => {
-            let status = std::process::Command::new("msiexec")
-                .args(["/i", &installer.to_string_lossy(), "/quiet", "/norestart"])
-                .status()?;
-            if !status.success() {
-                anyhow::bail!("MSI installer exited with code {:?}", status.code());
-            }
-        }
-        other => {
-            anyhow::bail!("Unknown installer format: .{}", other);
+            let mut outfile = std::fs::File::create(&outpath)?;
+            std::io::copy(&mut entry, &mut outfile)?;
         }
     }
-
+    println!("  {} {} extracted to {}", "✓".green(), app.name, target_dir.display());
     Ok(())
+}
+
+fn install_portable_dir(app: &AppEntry, src: &Path) -> anyhow::Result<()> {
+    let target_dir = tool_target_dir(app);
+    std::fs::create_dir_all(&target_dir)?;
+    if src.is_dir() {
+        copy_dir_recursive(src, &target_dir)?;
+    } else {
+        anyhow::bail!("portable source is not a directory: {}", src.display());
+    }
+    println!("  {} {} installed to {}", "✓".green(), app.name, target_dir.display());
+    Ok(())
+}
+
+fn tool_target_dir(app: &AppEntry) -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("tools")
+        .join(&app.id)
+}
+
+fn infer_installer_type(path: &Path) -> Option<String> {
+    if path.is_dir() {
+        return Some("portable".into());
+    }
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
 }
 
 fn install_via_winget(app: &AppEntry) -> anyhow::Result<()> {
@@ -369,11 +387,7 @@ fn print_summary(summary: &ImportSummary) {
     println!();
     println!("{} Import summary", "📋".bold());
 
-    for result in summary
-        .runtime_results
-        .iter()
-        .chain(summary.app_results.iter())
-    {
+    for result in summary.runtime_results.iter().chain(summary.app_results.iter()) {
         let status = match result.status {
             ItemStatus::Success => "✓".green(),
             ItemStatus::Skipped => "→".yellow(),
@@ -381,11 +395,7 @@ fn print_summary(summary: &ImportSummary) {
         };
         println!(
             "  {} [{}] {} {} — {}",
-            status,
-            result.kind,
-            result.name,
-            result.version,
-            result.detail
+            status, result.kind, result.name, result.version, result.detail
         );
     }
 
@@ -444,11 +454,6 @@ fn failed_app(app: &AppEntry, detail: impl Into<String>) -> ItemResult {
     }
 }
 
-fn status_detail(success: &str, skipped: &str, path: &Path) -> String {
-    let _ = skipped;
-    format!("{} ({})", success, path.display())
-}
-
 fn read_yes_no(default: bool) -> bool {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).ok();
@@ -468,7 +473,6 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
         let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dest_path = dest.join(entry.file_name());
-
         if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dest_path)?;
         } else {

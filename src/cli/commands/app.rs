@@ -212,6 +212,8 @@ fn cmd_add_path(dir: &PathBuf, name: Option<&str>) -> anyhow::Result<()> {
         selected: true,
         install_path: Some(dir.to_string_lossy().to_string()),
         silent_args: None,
+        installer_type: Some("portable".into()),
+        portable: Some(true),
     };
 
     let config_dir = Config::home_dir();
