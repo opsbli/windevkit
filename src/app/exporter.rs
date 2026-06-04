@@ -109,9 +109,13 @@ pub fn export_to(
     }
 
     // Write manifest
-    let manifest = Manifest::new(exported_apps, exported_runtimes);
+    let manifest = Manifest::new(exported_apps.clone(), exported_runtimes.clone());
     let manifest_path = output_dir.join("manifest.toml");
     manifest.save(&manifest_path)?;
+
+    // Write human-readable report
+    let report_path = output_dir.join("apps.md");
+    std::fs::write(&report_path, generate_apps_report(&exported_apps, &exported_runtimes))?;
 
     println!();
     println!(
@@ -120,6 +124,7 @@ pub fn export_to(
         output_dir.display()
     );
     println!("   Size: {}", format_size(dir_size(output_dir)?));
+    println!("   Report: {}", report_path.display());
 
     Ok(())
 }
@@ -180,4 +185,34 @@ fn format_size(bytes: u64) -> String {
         unit_idx += 1;
     }
     format!("{:.1} {}", size, UNITS[unit_idx])
+}
+
+fn generate_apps_report(apps: &[AppEntry], runtimes: &[AppRuntimeEntry]) -> String {
+    let mut out = String::new();
+    out.push_str("# windevkit Export Report\n\n");
+    out.push_str(&format!("- Apps: {}\n", apps.len()));
+    out.push_str(&format!("- Runtimes: {}\n\n", runtimes.len()));
+
+    out.push_str("## Applications\n\n");
+    out.push_str("| Name | Version | Source | Local Path |\n");
+    out.push_str("|---|---:|---|---|\n");
+    for app in apps {
+        let source = match app.source {
+            crate::app::AppSource::Winget => "winget",
+            crate::app::AppSource::Registry => "registry",
+            crate::app::AppSource::Portable => "portable",
+            crate::app::AppSource::Manual => "manual",
+        };
+        let path = app.install_path.as_deref().unwrap_or("");
+        out.push_str(&format!("| {} | {} | {} | {} |\n", app.name.replace('|', "\\|"), app.version.replace('|', "\\|"), source, path.replace('|', "\\|")));
+    }
+
+    out.push_str("\n## Runtimes\n\n");
+    out.push_str("| Tool | Version | Archive |\n");
+    out.push_str("|---|---:|---|\n");
+    for rt in runtimes {
+        let path = rt.archive_path.as_deref().unwrap_or("");
+        out.push_str(&format!("| {} | {} | {} |\n", rt.tool.replace('|', "\\|"), rt.version.replace('|', "\\|"), path.replace('|', "\\|")));
+    }
+    out
 }

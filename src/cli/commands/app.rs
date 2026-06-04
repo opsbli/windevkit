@@ -16,6 +16,14 @@ pub enum AppCommands {
         /// Open interactive multi-select after scanning
         #[arg(long)]
         interactive: bool,
+
+        /// Filter apps by keyword (name/id contains)
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Filter apps by category: Browser | IDE | Runtime | Dev Tool | Utility | Other
+        #[arg(long)]
+        category: Option<String>,
     },
 
     /// Add a portable app directory
@@ -57,18 +65,26 @@ struct LastScanSelection {
 
 pub fn execute(cmd: &AppCommands) -> anyhow::Result<()> {
     match cmd {
-        AppCommands::Scan { interactive } => cmd_scan(*interactive),
+        AppCommands::Scan { interactive, filter, category } => cmd_scan(*interactive, filter.as_deref(), category.as_deref()),
         AppCommands::AddPath { dir, name } => cmd_add_path(dir, name.as_deref()),
         AppCommands::Export { output, yes } => cmd_export(output.as_deref(), *yes),
         AppCommands::Import { path, yes } => cmd_import(path, *yes),
     }
 }
 
-fn cmd_scan(interactive: bool) -> anyhow::Result<()> {
+fn cmd_scan(interactive: bool, filter: Option<&str>, category: Option<&str>) -> anyhow::Result<()> {
     println!("{} Scanning installed applications...", "🔍".bold());
 
     let config = Config::load()?;
     let mut apps = app::scan(&config.app_scan.exclude_patterns)?;
+
+    if let Some(f) = filter {
+        let f = f.to_lowercase();
+        apps.retain(|a| a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f));
+    }
+    if let Some(c) = category {
+        apps.retain(|a| category_for_app(a).eq_ignore_ascii_case(c));
+    }
 
     if apps.is_empty() {
         println!("  {} No applications found.", "ℹ".yellow());
@@ -105,6 +121,12 @@ fn cmd_scan(interactive: bool) -> anyhow::Result<()> {
             "  {} Tip: run {} to pick apps now, then export later.",
             "💡".yellow(),
             "windevkit app scan --interactive".bold().cyan()
+        );
+        println!(
+            "  {} You can also use {} and {}.",
+            "🔎".bold(),
+            "--filter <keyword>".bold().cyan(),
+            "--category <Browser|IDE|Runtime|Dev Tool|Utility|Other>".bold().cyan()
         );
         println!(
             "  {} Or run {} for one-step export.",
