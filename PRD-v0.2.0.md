@@ -1,6 +1,6 @@
 # PRD v0.2.0: windevkit — TUI Export, Stronger Offline Rules, Safer Import
 
-> Status: Draft  
+> Status: Implemented (release prep)  
 > Scope: v0.2.0  
 > Based on: v0.2.0 Grill Session  
 > Date: 2026-06-04
@@ -102,7 +102,7 @@ Reasoning:
 The product keeps both automatic and explicit entry modes:
 - Default: `windevkit app export` enters TUI
 - Explicit: `windevkit app tui`
-- Escape hatch: `windevkit app export --no-tui`
+- Current non-interactive escape hatch: `windevkit app export --yes`
 
 This preserves scriptability while improving the default human workflow.
 
@@ -293,3 +293,26 @@ Likely additions/refactors:
 ### Release Goal
 
 v0.2.0 should make windevkit feel like a real “prepare my rebuild kit” tool, not just a CLI prototype.
+
+---
+
+## Implementation Snapshot
+
+Implemented in the current codebase:
+
+- `app::tui` based on `ratatui + crossterm`
+- `windevkit app tui`
+- `windevkit app export` defaulting to TUI unless `--yes`
+- saved last selection reuse
+- built-in rules + `%USERPROFILE%\\.windevkit\\rules.toml`
+- rule-driven category / silent args / installer type / portable behavior
+- concurrent export downloads with default concurrency `3`
+- config-driven `app_export.download_concurrency`
+- CLI override via `windevkit app export --concurrency <n>`
+- import summary + interactive `Retry / Skip / Abort`
+- local artifact handling for `exe` / `msi` / `zip` / `portable`
+- `manifest.toml` + `apps.md` + final `.zip`
+
+Known gap versus earlier draft wording:
+
+- `--no-tui` is not implemented; `--yes` is the current non-interactive path.

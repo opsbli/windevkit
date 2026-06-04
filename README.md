@@ -22,7 +22,8 @@
 | `windevkit list node` | 列出已安装版本 |
 | `windevkit uninstall node 18.20.0` | 卸载指定版本 |
 | `windevkit app scan` | 扫描已安装的应用 |
-| `windevkit app export` | 导出离线工具箱到 U 盘 |
+| `windevkit app tui` | 打开全屏 TUI 选择器 |
+| `windevkit app export` | 导出离线工具箱到 U 盘（默认进入 TUI，`--yes` 跳过） |
 | `windevkit app import D:\my-toolbox` | 在新机恢复全部环境 |
 | `windevkit app add-path D:\tools\everything` | 添加便携应用到清单 |
 | `windevkit status` | 查看环境状态 |
@@ -74,8 +75,17 @@ windevkit status
 # 扫描已安装的应用
 windevkit app scan
 
-# 交互式选择 → 导出到 U 盘
+# 先进入全屏 TUI 选择器
+windevkit app tui
+
+# 默认：扫描 → TUI 选择 → 导出到 U 盘
 windevkit app export --output D:\my-toolbox
+
+# 非交互导出（使用上次选择/当前 selected 状态）
+windevkit app export --output D:\my-toolbox --yes
+
+# 指定并发下载数
+windevkit app export --output D:\my-toolbox --concurrency 5
 ```
 
 ### 5. 在新系统恢复
@@ -102,6 +112,90 @@ windevkit install node 22.11.0 --mirror huawei
 
 # 或在 init 时设置默认镜像
 windevkit init --mirror aliyun
+```
+
+## App 导出 / 导入增强（v0.2.0）
+
+### TUI
+
+`windevkit app export` 默认进入 TUI，也可以显式使用：
+
+```bash
+windevkit app tui
+windevkit app tui --category IDE
+windevkit app tui --filter chrome
+```
+
+TUI 键位：
+
+- `/` 搜索
+- `space` 勾选/取消
+- `a` 当前可见项全选/全不选
+- `c` 切换分类
+- `s` 只看已选
+- `j` / `k` 或方向键移动
+- `enter` 确认
+- `q` / `esc` 退出
+
+### rules.toml
+
+windevkit 会在首次使用时生成：
+
+```text
+%USERPROFILE%\.windevkit\rules.toml
+```
+
+支持字段：
+
+- `match`
+- `download_url`
+- `silent_args`
+- `installer_type`：`exe | msi | zip | portable`
+- `category`
+- `portable`
+
+示例：
+
+```toml
+[[rules]]
+match = "Google Chrome"
+download_url = "https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe"
+silent_args = "/silent /install"
+installer_type = "exe"
+category = "Browser"
+portable = false
+
+[[rules]]
+match = "Some Portable Tool"
+download_url = "https://example.com/tool.zip"
+installer_type = "zip"
+category = "Utility"
+portable = true
+```
+
+### Import 行为
+
+- 默认失败后继续，最后输出汇总
+- 交互模式支持 `Retry / Skip / Abort`
+- 本地 artifact 支持：`exe` / `msi` / `zip` / `portable`
+- `zip` / `portable` 默认恢复到：
+
+```text
+%USERPROFILE%\tools\<app-id>
+```
+
+### 导出并发
+
+默认导出并发数为 `3`，可在配置或命令行覆盖：
+
+```toml
+[app_export]
+auto_download_installers = true
+download_concurrency = 3
+```
+
+```bash
+windevkit app export --concurrency 5
 ```
 
 ## 目录结构
